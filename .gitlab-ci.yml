@@ -609,20 +609,13 @@ trivy-frontend:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
-    - echo "DEBUG cosign step 1 - azure login done"
     - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    - echo "DEBUG cosign step 2 - acr token length ${#ACR_TOKEN}"
     - apk add --no-cache curl
-    - echo "DEBUG cosign step 3 - curl installed"
     - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
     - chmod +x /usr/local/bin/cosign
-    - echo "DEBUG cosign step 4 - cosign binary ready"
-    - echo "DEBUG cosign step 5 - COSIGN_KEY length ${#COSIGN_KEY}"
-    - echo "$COSIGN_KEY" > /tmp/cosign.key
-    - echo "DEBUG cosign step 6 - key written"
-  after_script:
-    # Always clean up the private key — even if the job fails
-    - rm -f /tmp/cosign.key
+    # COSIGN_KEY is a File-type GitLab variable — GitLab writes the PEM content
+    # to a temp file and sets $COSIGN_KEY to that file path. No newline stripping.
+    # (Masked Variable type strips newlines, breaking PEM format — File type is required)
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
 
@@ -635,7 +628,7 @@ cosign-backend:
     - 'echo "Signing digest: $IMAGE_DIGEST"'
     - |
       COSIGN_PASSWORD="" cosign sign \
-        --key /tmp/cosign.key \
+        --key "$COSIGN_KEY" \
         --registry-username 00000000-0000-0000-0000-000000000000 \
         --registry-password "$ACR_TOKEN" \
         --yes \
@@ -650,7 +643,7 @@ cosign-frontend:
     - 'echo "Signing digest: $IMAGE_DIGEST"'
     - |
       COSIGN_PASSWORD="" cosign sign \
-        --key /tmp/cosign.key \
+        --key "$COSIGN_KEY" \
         --registry-username 00000000-0000-0000-0000-000000000000 \
         --registry-password "$ACR_TOKEN" \
         --yes \
