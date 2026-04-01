@@ -144,6 +144,7 @@ default:
 .azure_login:
   before_script:
     - echo "Logging into Azure via OIDC (no password)..."
+    - echo "DEBUG - AZURE_CLIENT_ID length ${#AZURE_CLIENT_ID}, AZURE_TENANT_ID length ${#AZURE_TENANT_ID}, AZURE_OIDC_TOKEN length ${#AZURE_OIDC_TOKEN}"
     - az login
         --service-principal
         --username "$AZURE_CLIENT_ID"
