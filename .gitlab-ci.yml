@@ -211,7 +211,9 @@ default:
 #
 gitleaks:
   stage: scan
-  image: zricethezav/gitleaks:v8.18.4
+  image:
+    name: zricethezav/gitleaks:v8.18.4
+    entrypoint: [""]
   script:
     - 'echo "=== Gate 1: Gitleaks — scanning git history for secrets ==="'
     # --source . scans the current directory (full git history)
