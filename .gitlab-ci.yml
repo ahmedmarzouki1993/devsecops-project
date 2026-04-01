@@ -334,7 +334,9 @@ pip-audit:
 #
 checkov:
   stage: scan
-  image: bridgecrew/checkov:3.2.51
+  image:
+    name: bridgecrew/checkov:3.2.51
+    entrypoint: [""]
   script:
     - 'echo "=== Gate 4: Checkov — Terraform/K8s misconfiguration scan ==="'
     # Scan Terraform
