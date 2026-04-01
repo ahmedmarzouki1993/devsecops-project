@@ -611,7 +611,8 @@ trivy-frontend:
     - !reference [.azure_login, before_script]
     # Get ACR token — cosign uses --registry-username/password directly (no Docker needed)
     - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    # Install Cosign binary
+    # Install curl (not in alpine by default) then download cosign binary
+    - apk add --no-cache curl
     - |
       curl -sLo /usr/local/bin/cosign \
         https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
@@ -629,7 +630,7 @@ cosign-backend:
   extends: .cosign_template
   script:
     - 'echo "=== Gate 6: Cosign — signing backend image ==="'
-    - IMAGE_DIGEST=$(az acr manifest show-metadata --registry "${ACR_LOGIN_SERVER%%.*}" --name "backend:$CI_COMMIT_SHORT_SHA" --query "digest" -o tsv)
+    - IMAGE_DIGEST=$(az acr repository show --name "${ACR_LOGIN_SERVER%%.*}" --image "backend:$CI_COMMIT_SHORT_SHA" --query digest -o tsv)
     - 'echo "Signing digest: $IMAGE_DIGEST"'
     - |
       COSIGN_PASSWORD="" cosign sign \
@@ -644,7 +645,7 @@ cosign-frontend:
   extends: .cosign_template
   script:
     - 'echo "=== Gate 6: Cosign — signing frontend image ==="'
-    - IMAGE_DIGEST=$(az acr manifest show-metadata --registry "${ACR_LOGIN_SERVER%%.*}" --name "frontend:$CI_COMMIT_SHORT_SHA" --query "digest" -o tsv)
+    - IMAGE_DIGEST=$(az acr repository show --name "${ACR_LOGIN_SERVER%%.*}" --image "frontend:$CI_COMMIT_SHORT_SHA" --query digest -o tsv)
     - 'echo "Signing digest: $IMAGE_DIGEST"'
     - |
       COSIGN_PASSWORD="" cosign sign \
