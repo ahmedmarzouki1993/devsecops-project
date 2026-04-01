@@ -18,6 +18,11 @@ RUN npm run build
 # nginx:1.27-alpine — pinned version, no Node.js, much smaller image
 FROM nginx:1.27-alpine AS runtime
 
+# Upgrade all Alpine packages to patch OS-level CVEs (e.g. libxml2, openssl).
+# Alpine packages are separate from the nginx version — this keeps nginx pinned
+# while pulling the latest security patches for system libraries.
+RUN apk upgrade --no-cache
+
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
 
