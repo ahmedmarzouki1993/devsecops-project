@@ -144,14 +144,12 @@ default:
 .azure_login:
   before_script:
     - echo "Logging into Azure via OIDC (no password)..."
-    - echo "DEBUG - AZURE_CLIENT_ID length ${#AZURE_CLIENT_ID}, AZURE_TENANT_ID length ${#AZURE_TENANT_ID}, AZURE_OIDC_TOKEN length ${#AZURE_OIDC_TOKEN}"
     - az login
         --service-principal
         --username "$AZURE_CLIENT_ID"
         --tenant "$AZURE_TENANT_ID"
         --federated-token "$AZURE_OIDC_TOKEN"
     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-    - az acr login --name "${ACR_LOGIN_SERVER%%.*}"
 
 # OIDC token block — included in every job that needs Azure access.
 # GitLab injects a short-lived signed JWT into AZURE_OIDC_TOKEN.
@@ -405,8 +403,12 @@ checkov:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
-    # Install docker CLI inside the azure-cli image
+    # Install Docker CLI — must happen before ACR login
     - apt-get update -qq && apt-get install -y -qq docker.io
+    # Login to ACR using expose-token (avoids Docker daemon requirement during az acr login)
+    # --expose-token returns an ACR refresh token we pass directly to docker login
+    - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
+    - docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$ACR_TOKEN"
     # Use Docker BuildKit for faster, more efficient builds
     - export DOCKER_BUILDKIT=1
   rules:
@@ -498,10 +500,16 @@ build-frontend:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
+    # Install Docker + login to ACR (trivy needs to pull the image)
+    - apt-get update -qq && apt-get install -y -qq docker.io wget apt-transport-https gnupg
+    - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
+    - docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$ACR_TOKEN"
     # Install Trivy
     - |
-      apt-get update -qq
-      apt-get install -y -qq wget apt-transport-https gnupg
+      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
+      echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" \
+        > /etc/apt/sources.list.d/trivy.list
+      apt-get update -qq && apt-get install -y -qq trivy
       wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
       echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" \
         > /etc/apt/sources.list.d/trivy.list
@@ -600,9 +608,12 @@ trivy-frontend:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
+    # Install Docker + login to ACR (cosign needs to push signatures to registry)
+    - apt-get update -qq && apt-get install -y -qq docker.io wget
+    - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
+    - docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$ACR_TOKEN"
     # Install Cosign
     - |
-      apt-get update -qq && apt-get install -y -qq wget
       wget -qO /usr/local/bin/cosign \
         https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
       chmod +x /usr/local/bin/cosign
