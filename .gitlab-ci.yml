@@ -509,8 +509,9 @@ build-frontend:
     - !reference [.azure_login, before_script]
     # Get ACR token for registry auth (trivy uses it directly — no Docker daemon needed)
     - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    # Install Trivy binary
+    # Install Trivy — alpine image has wget but not curl, so download binary directly
     - |
+      apk add --no-cache curl
       curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
         | sh -s -- -b /usr/local/bin
   rules:
