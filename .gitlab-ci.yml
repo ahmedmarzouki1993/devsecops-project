@@ -609,16 +609,17 @@ trivy-frontend:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
-    # Get ACR token — cosign uses --registry-username/password directly (no Docker needed)
+    - echo "--- DEBUG cosign before_script: azure login done ---"
     - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    # Install curl (not in alpine by default) then download cosign binary
+    - echo "--- DEBUG cosign before_script: acr token acquired (length ${#ACR_TOKEN}) ---"
     - apk add --no-cache curl
-    - |
-      curl -sLo /usr/local/bin/cosign \
-        https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
-      chmod +x /usr/local/bin/cosign
-    # Write the private key from CI variable to a temp file
+    - echo "--- DEBUG cosign before_script: curl installed ---"
+    - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+    - chmod +x /usr/local/bin/cosign
+    - echo "--- DEBUG cosign before_script: cosign installed ($(cosign version 2>&1 | head -1)) ---"
+    - echo "--- DEBUG cosign before_script: COSIGN_KEY length ${#COSIGN_KEY} ---"
     - echo "$COSIGN_KEY" > /tmp/cosign.key
+    - echo "--- DEBUG cosign before_script: key written ---"
   after_script:
     # Always clean up the private key — even if the job fails
     - rm -f /tmp/cosign.key
