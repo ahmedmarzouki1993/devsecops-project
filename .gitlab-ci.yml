@@ -219,7 +219,7 @@ gitleaks:
     # --source . scans the current directory (full git history)
     # --verbose prints each finding with file + line number
     # Exit code 1 = secrets found (pipeline fails) | 0 = clean
-    - gitleaks detect --source . --verbose --redact
+    - gitleaks detect --source . --verbose --redact --config .gitleaks.toml
   rules:
     # Run on every push to any branch AND on merge requests
     - if: '$CI_PIPELINE_SOURCE == "push"'
@@ -705,6 +705,7 @@ notify-success:
     - apk add --no-cache curl --quiet
   script:
     - 'echo "=== Notify: Sending SUCCESS notification to Slack ==="'
+    - '[ -z "$SLACK_WEBHOOK_CI" ] && echo "SLACK_WEBHOOK_CI not set — skipping (set it in Phase 3 Slack setup)" && exit 0'
     - |
       curl -s -X POST "$SLACK_WEBHOOK_CI" \
         -H 'Content-type: application/json' \
@@ -743,6 +744,7 @@ notify-failure:
     - apk add --no-cache curl --quiet
   script:
     - 'echo "=== Notify: Sending FAILURE notification to Slack ==="'
+    - '[ -z "$SLACK_WEBHOOK_CI" ] && echo "SLACK_WEBHOOK_CI not set — skipping (set it in Phase 3 Slack setup)" && exit 0'
     - |
       curl -s -X POST "$SLACK_WEBHOOK_CI" \
         -H 'Content-type: application/json' \

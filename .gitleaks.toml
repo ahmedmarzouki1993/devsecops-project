@@ -1,0 +1,9 @@
+# .gitleaks.toml — Gitleaks configuration
+# Allowlist for known false positives in this repository.
+
+[allowlist]
+  description = "Known false positives"
+  regexes = [
+    # AWS example key used in comments/documentation — not a real secret
+    "AKIAIOSFODNN7EXAMPLE",
+  ]
