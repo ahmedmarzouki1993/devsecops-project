@@ -120,35 +120,42 @@ default:
 #   15 lines into every job. Anchors define it once, << : *anchor merges it in.
 #   This is YAML's equivalent of a function or variable.
 #
-# ANCHOR: .azure_login
-#   Logs into Azure using OIDC (no password — just the CI_JOB_JWT_V2 token).
-#   Also logs into ACR so docker push works.
+# .azure_login — hidden job template (mapping, not sequence)
+#   Defines the Azure OIDC login steps as a before_script block.
+#   Other jobs reference these steps via GitLab's !reference tag.
+#
+# WHY !reference AND NOT YAML ANCHORS ON A SEQUENCE?
+#   GitLab CI requires all hidden jobs (keys starting with ".") to be mappings.
+#   A sequence anchor on a hidden job confuses the GitLab linter and causes
+#   spurious errors on other jobs (e.g. "gitleaks:script should be a string").
+#   !reference [.azure_login, before_script] is the GitLab-recommended approach.
 #
 # HOW OIDC LOGIN WORKS:
 #
 #   GitLab Runner                Azure Active Directory
 #        │                              │
-#        │── CI_JOB_JWT_V2 ──────────▶ │ "Is this token valid?"
+#        │── AZURE_OIDC_TOKEN ───────▶ │ "Is this token valid?"
 #        │   (signed JWT, short-lived)  │
 #        │                              │── checks issuer, audience, subject
 #        │◀── temporary access token ── │ "Yes, here's a 1-hour token"
 #        │                              │
 #        │── az acr login ────────────▶ ACR (using the access token)
 #
-.azure_login: &azure_login
-  - echo "Logging into Azure via OIDC (no password)..."
-  - az login
-      --service-principal
-      --username "$AZURE_CLIENT_ID"
-      --tenant "$AZURE_TENANT_ID"
-      --federated-token "$AZURE_OIDC_TOKEN"
-  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-  - az acr login --name "${ACR_LOGIN_SERVER%%.*}"
+.azure_login:
+  before_script:
+    - echo "Logging into Azure via OIDC (no password)..."
+    - az login
+        --service-principal
+        --username "$AZURE_CLIENT_ID"
+        --tenant "$AZURE_TENANT_ID"
+        --federated-token "$AZURE_OIDC_TOKEN"
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - az acr login --name "${ACR_LOGIN_SERVER%%.*}"
 
 # OIDC token block — included in every job that needs Azure access.
 # GitLab injects a short-lived signed JWT into AZURE_OIDC_TOKEN.
 # CI_JOB_JWT_V2 was removed in GitLab 17.0 — id_tokens is the current approach.
-.azure_id_token: &azure_id_token
+.azure_id_token:
   id_tokens:
     AZURE_OIDC_TOKEN:
       aud: api://AzureADTokenExchange
@@ -385,12 +392,14 @@ checkov:
 #
 # =============================================================================
 
-.build_template: &build_template
+.build_template:
   stage: build
   image: mcr.microsoft.com/azure-cli:2.61.0
-  <<: *azure_id_token
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
   before_script:
-    - *azure_login
+    - !reference [.azure_login, before_script]
     # Install docker CLI inside the azure-cli image
     - apt-get update -qq && apt-get install -y -qq docker.io
     # Use Docker BuildKit for faster, more efficient builds
@@ -401,7 +410,7 @@ checkov:
 
 
 build-backend:
-  <<: *build_template
+  extends: .build_template
   script:
     - echo "=== Stage 2: Building backend image ==="
     - |
@@ -417,7 +426,7 @@ build-backend:
 
 
 build-frontend:
-  <<: *build_template
+  extends: .build_template
   script:
     - echo "=== Stage 2: Building frontend image ==="
     - |
@@ -476,12 +485,14 @@ build-frontend:
 #
 # =============================================================================
 
-.trivy_template: &trivy_template
+.trivy_template:
   stage: test
   image: mcr.microsoft.com/azure-cli:2.61.0
-  <<: *azure_id_token
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
   before_script:
-    - *azure_login
+    - !reference [.azure_login, before_script]
     # Install Trivy
     - |
       apt-get update -qq
@@ -495,7 +506,7 @@ build-frontend:
 
 
 trivy-backend:
-  <<: *trivy_template
+  extends: .trivy_template
   script:
     - echo "=== Gate 5: Trivy — scanning backend image for CVEs ==="
     - |
@@ -511,7 +522,7 @@ trivy-backend:
 
 
 trivy-frontend:
-  <<: *trivy_template
+  extends: .trivy_template
   script:
     - echo "=== Gate 5: Trivy — scanning frontend image for CVEs ==="
     - |
@@ -576,12 +587,14 @@ trivy-frontend:
 #
 # =============================================================================
 
-.cosign_template: &cosign_template
+.cosign_template:
   stage: sign
   image: mcr.microsoft.com/azure-cli:2.61.0
-  <<: *azure_id_token
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
   before_script:
-    - *azure_login
+    - !reference [.azure_login, before_script]
     # Install Cosign
     - |
       apt-get update -qq && apt-get install -y -qq wget
@@ -599,7 +612,7 @@ trivy-frontend:
 
 
 cosign-backend:
-  <<: *cosign_template
+  extends: .cosign_template
   script:
     - echo "=== Gate 6: Cosign — signing backend image ==="
     - |
@@ -631,7 +644,7 @@ cosign-backend:
 
 
 cosign-frontend:
-  <<: *cosign_template
+  extends: .cosign_template
   script:
     - echo "=== Gate 6: Cosign — signing frontend image ==="
     - |
