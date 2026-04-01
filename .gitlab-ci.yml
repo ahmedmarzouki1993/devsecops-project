@@ -403,14 +403,6 @@ checkov:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
-    # Install Docker CLI — must happen before ACR login
-    - apt-get update -qq && apt-get install -y -qq docker.io
-    # Login to ACR using expose-token (avoids Docker daemon requirement during az acr login)
-    # --expose-token returns an ACR refresh token we pass directly to docker login
-    - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    - docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$ACR_TOKEN"
-    # Use Docker BuildKit for faster, more efficient builds
-    - export DOCKER_BUILDKIT=1
   rules:
     # Only build on pushes to main branch (not every feature branch)
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
@@ -419,32 +411,31 @@ checkov:
 build-backend:
   extends: .build_template
   script:
-    - 'echo "=== Stage 2: Building backend image ==="'
+    - 'echo "=== Stage 2: Building backend image via az acr build (no Docker daemon needed) ==="'
+    # az acr build uploads the context to Azure and builds inside ACR itself.
+    # No Docker daemon required — the build runs in Azure infrastructure.
     - |
-      docker build \
-        --tag "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA" \
-        --tag "$ACR_LOGIN_SERVER/backend:latest" \
+      az acr build \
+        --registry "${ACR_LOGIN_SERVER%%.*}" \
+        --image "backend:$CI_COMMIT_SHORT_SHA" \
+        --image "backend:latest" \
         --file app/backend/Dockerfile \
         app/backend/
-      # ↑ Two tags: commit SHA (permanent) + latest (convenience pointer)
-    - docker push "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
-    - docker push "$ACR_LOGIN_SERVER/backend:latest"
-    - echo "Pushed → $ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
+    - echo "Built and pushed → $ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
 
 
 build-frontend:
   extends: .build_template
   script:
-    - 'echo "=== Stage 2: Building frontend image ==="'
+    - 'echo "=== Stage 2: Building frontend image via az acr build ==="'
     - |
-      docker build \
-        --tag "$ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA" \
-        --tag "$ACR_LOGIN_SERVER/frontend:latest" \
+      az acr build \
+        --registry "${ACR_LOGIN_SERVER%%.*}" \
+        --image "frontend:$CI_COMMIT_SHORT_SHA" \
+        --image "frontend:latest" \
         --file app/frontend/Dockerfile \
         app/frontend/
-    - docker push "$ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA"
-    - docker push "$ACR_LOGIN_SERVER/frontend:latest"
-    - echo "Pushed → $ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA"
+    - echo "Built and pushed → $ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA"
 
 
 # =============================================================================
@@ -500,20 +491,12 @@ build-frontend:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
-    # Install Docker + login to ACR (trivy needs to pull the image)
-    - apt-get update -qq && apt-get install -y -qq docker.io wget apt-transport-https gnupg
+    # Get ACR token for registry auth (trivy uses it directly — no Docker daemon needed)
     - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    - docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$ACR_TOKEN"
-    # Install Trivy
+    # Install Trivy binary
     - |
-      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
-      echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" \
-        > /etc/apt/sources.list.d/trivy.list
-      apt-get update -qq && apt-get install -y -qq trivy
-      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
-      echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" \
-        > /etc/apt/sources.list.d/trivy.list
-      apt-get update -qq && apt-get install -y -qq trivy
+      curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+        | sh -s -- -b /usr/local/bin
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
 
@@ -524,14 +507,13 @@ trivy-backend:
     - 'echo "=== Gate 5: Trivy — scanning backend image for CVEs ==="'
     - |
       trivy image \
+        --username 00000000-0000-0000-0000-000000000000 \
+        --password "$ACR_TOKEN" \
         --exit-code 1 \
         --severity CRITICAL,HIGH \
         --ignore-unfixed \
         --format table \
         "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
-      # --exit-code 1   → non-zero exit if vulnerabilities found (fails job)
-      # --ignore-unfixed → skip CVEs with no available fix (can't patch them)
-      # --format table  → human-readable output in CI logs
 
 
 trivy-frontend:
@@ -540,6 +522,8 @@ trivy-frontend:
     - 'echo "=== Gate 5: Trivy — scanning frontend image for CVEs ==="'
     - |
       trivy image \
+        --username 00000000-0000-0000-0000-000000000000 \
+        --password "$ACR_TOKEN" \
         --exit-code 1 \
         --severity CRITICAL,HIGH \
         --ignore-unfixed \
@@ -608,17 +592,14 @@ trivy-frontend:
       aud: api://AzureADTokenExchange
   before_script:
     - !reference [.azure_login, before_script]
-    # Install Docker + login to ACR (cosign needs to push signatures to registry)
-    - apt-get update -qq && apt-get install -y -qq docker.io wget
+    # Get ACR token — cosign uses --registry-username/password directly (no Docker needed)
     - ACR_TOKEN=$(az acr login --name "${ACR_LOGIN_SERVER%%.*}" --expose-token --output tsv --query accessToken)
-    - docker login "$ACR_LOGIN_SERVER" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$ACR_TOKEN"
-    # Install Cosign
+    # Install Cosign binary
     - |
-      wget -qO /usr/local/bin/cosign \
+      curl -sLo /usr/local/bin/cosign \
         https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
       chmod +x /usr/local/bin/cosign
     # Write the private key from CI variable to a temp file
-    # (cosign needs it as a file, not an env var)
     - echo "$COSIGN_KEY" > /tmp/cosign.key
   after_script:
     # Always clean up the private key — even if the job fails
@@ -631,30 +612,13 @@ cosign-backend:
   extends: .cosign_template
   script:
     - 'echo "=== Gate 6: Cosign — signing backend image ==="'
-    - |
-      # Get the image digest (sha256 hash of the image manifest)
-      # We sign the DIGEST, not the tag — tags are mutable, digests are not
-      IMAGE_DIGEST=$(
-        docker manifest inspect \
-          "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA" \
-          --verbose 2>/dev/null | \
-          python3 -c "
-      import sys, json
-      data = json.load(sys.stdin)
-      if isinstance(data, list):
-          print(data[0]['Descriptor']['digest'])
-      else:
-          print(data['config']['digest'])
-      " 2>/dev/null || \
-        az acr manifest show-metadata \
-          --registry "${ACR_LOGIN_SERVER%%.*}" \
-          --name "backend:$CI_COMMIT_SHORT_SHA" \
-          --query "digest" -o tsv
-      )
+    - IMAGE_DIGEST=$(az acr manifest show-metadata --registry "${ACR_LOGIN_SERVER%%.*}" --name "backend:$CI_COMMIT_SHORT_SHA" --query "digest" -o tsv)
     - 'echo "Signing digest: $IMAGE_DIGEST"'
     - |
       COSIGN_PASSWORD="" cosign sign \
         --key /tmp/cosign.key \
+        --registry-username 00000000-0000-0000-0000-000000000000 \
+        --registry-password "$ACR_TOKEN" \
         --yes \
         "$ACR_LOGIN_SERVER/backend@$IMAGE_DIGEST"
 
@@ -663,17 +627,13 @@ cosign-frontend:
   extends: .cosign_template
   script:
     - 'echo "=== Gate 6: Cosign — signing frontend image ==="'
-    - |
-      IMAGE_DIGEST=$(
-        az acr manifest show-metadata \
-          --registry "${ACR_LOGIN_SERVER%%.*}" \
-          --name "frontend:$CI_COMMIT_SHORT_SHA" \
-          --query "digest" -o tsv
-      )
+    - IMAGE_DIGEST=$(az acr manifest show-metadata --registry "${ACR_LOGIN_SERVER%%.*}" --name "frontend:$CI_COMMIT_SHORT_SHA" --query "digest" -o tsv)
     - 'echo "Signing digest: $IMAGE_DIGEST"'
     - |
       COSIGN_PASSWORD="" cosign sign \
         --key /tmp/cosign.key \
+        --registry-username 00000000-0000-0000-0000-000000000000 \
+        --registry-password "$ACR_TOKEN" \
         --yes \
         "$ACR_LOGIN_SERVER/frontend@$IMAGE_DIGEST"
 
