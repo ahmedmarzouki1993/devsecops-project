@@ -1,0 +1,757 @@
+# =============================================================================
+# .gitlab-ci.yml — DevSecOps CI Pipeline
+# =============================================================================
+#
+# WHAT THIS FILE DOES:
+#   Every push to this repo triggers this pipeline. It runs 6 security gates
+#   before a single line of code reaches production. If any gate fails, the
+#   pipeline stops — the image is never built, never deployed.
+#
+# PIPELINE FLOW (left to right = time):
+#
+#   Developer pushes code
+#         │
+#         ▼
+#   ┌─────────────────────────────────────────────┐
+#   │  STAGE: scan  (gates 1-4, run in PARALLEL)  │
+#   │                                             │
+#   │  [Gitleaks]  [Bandit]  [pip-audit]          │
+#   │  [Checkov]                                  │
+#   │                                             │
+#   │  WHY PARALLEL? These 4 scan SOURCE CODE     │
+#   │  and CONFIG — they don't need a built image │
+#   │  Running them together saves CI minutes     │
+#   └──────────────────┬──────────────────────────┘
+#                      │ all 4 must pass
+#                      ▼
+#   ┌─────────────────────────────────────────────┐
+#   │  STAGE: build                               │
+#   │                                             │
+#   │  [build-backend]    [build-frontend]        │
+#   │                                             │
+#   │  Builds Docker images, pushes to ACR.       │
+#   │  Tagged with $CI_COMMIT_SHORT_SHA (7 chars) │
+#   │  e.g. acrdevsecops9nsi.azurecr.io/          │
+#   │       backend:a1b2c3d                       │
+#   └──────────────────┬──────────────────────────┘
+#                      │ images in ACR
+#                      ▼
+#   ┌─────────────────────────────────────────────┐
+#   │  STAGE: test  (gate 5)                      │
+#   │                                             │
+#   │  [trivy-backend]    [trivy-frontend]        │
+#   │                                             │
+#   │  Scans the BUILT IMAGE for CVEs.            │
+#   │  Fails on CRITICAL or HIGH severity.        │
+#   │  WHY AFTER BUILD? Can't scan what doesn't   │
+#   │  exist. Source scan ≠ image scan.           │
+#   └──────────────────┬──────────────────────────┘
+#                      │ no critical CVEs
+#                      ▼
+#   ┌─────────────────────────────────────────────┐
+#   │  STAGE: sign  (gate 6)                      │
+#   │                                             │
+#   │  [cosign-backend]   [cosign-frontend]       │
+#   │                                             │
+#   │  Cryptographically signs the image digest.  │
+#   │  In Phase 5, Kyverno BLOCKS any unsigned    │
+#   │  image from running in AKS.                 │
+#   └──────────────────┬──────────────────────────┘
+#                      │
+#                      ▼
+#   ┌─────────────────────────────────────────────┐
+#   │  STAGE: notify                              │
+#   │                                             │
+#   │  [slack-success] OR [slack-failure]         │
+#   │                                             │
+#   │  Posts result to #ci-pipeline Slack channel │
+#   └─────────────────────────────────────────────┘
+#
+# AUTHENTICATION TO AZURE (no passwords):
+#   GitLab CI proves its identity to Azure via OIDC (OpenID Connect).
+#   Flow:
+#     1. GitLab generates a short-lived signed JWT token (CI_JOB_JWT_V2)
+#     2. Azure validates the token against the GitLab OIDC issuer URL
+#     3. Azure issues a temporary access token — no client secret stored anywhere
+#
+# REQUIRED GITLAB CI VARIABLES (Settings → CI/CD → Variables):
+#   AZURE_CLIENT_ID       — App Registration client ID (masked, protected)
+#   AZURE_TENANT_ID       — Azure AD tenant ID (masked, protected)
+#   AZURE_SUBSCRIPTION_ID — Azure subscription ID (masked, protected)
+#   ACR_LOGIN_SERVER      — e.g. acrdevsecops9nsi.azurecr.io
+#   AKS_CLUSTER_NAME      — aks-devsecops
+#   AZURE_RESOURCE_GROUP  — rg-devsecops
+#   KEY_VAULT_NAME        — kv-devsecops-9nsi
+#   SLACK_WEBHOOK_CI      — Slack incoming webhook URL (masked, protected)
+#   COSIGN_KEY            — Cosign private key (masked, protected) — see gate 6
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Pipeline stages — executed LEFT TO RIGHT, jobs within a stage run in parallel
+# -----------------------------------------------------------------------------
+stages:
+  - scan    # Source code security gates (no image needed)
+  - build   # Docker build + push to ACR
+  - test    # Container image scanning
+  - sign    # Image signing
+  - notify  # Slack notification
+
+
+# -----------------------------------------------------------------------------
+# Global default settings — applied to every job unless overridden
+# -----------------------------------------------------------------------------
+default:
+  # Retry transient failures (network blips, ACR timeouts) once before failing.
+  # This avoids false pipeline failures from infra hiccups.
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+
+# -----------------------------------------------------------------------------
+# YAML Anchors — reusable blocks (DRY principle)
+# -----------------------------------------------------------------------------
+#
+# WHY ANCHORS?
+#   Many jobs need the same Azure login logic. Without anchors, we'd copy-paste
+#   15 lines into every job. Anchors define it once, << : *anchor merges it in.
+#   This is YAML's equivalent of a function or variable.
+#
+# ANCHOR: .azure_login
+#   Logs into Azure using OIDC (no password — just the CI_JOB_JWT_V2 token).
+#   Also logs into ACR so docker push works.
+#
+# HOW OIDC LOGIN WORKS:
+#
+#   GitLab Runner                Azure Active Directory
+#        │                              │
+#        │── CI_JOB_JWT_V2 ──────────▶ │ "Is this token valid?"
+#        │   (signed JWT, short-lived)  │
+#        │                              │── checks issuer, audience, subject
+#        │◀── temporary access token ── │ "Yes, here's a 1-hour token"
+#        │                              │
+#        │── az acr login ────────────▶ ACR (using the access token)
+#
+.azure_login: &azure_login
+  - echo "Logging into Azure via OIDC (no password)..."
+  - az login
+      --service-principal
+      --username "$AZURE_CLIENT_ID"
+      --tenant "$AZURE_TENANT_ID"
+      --federated-token "$AZURE_OIDC_TOKEN"
+  - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+  - az acr login --name "${ACR_LOGIN_SERVER%%.*}"
+
+# OIDC token block — included in every job that needs Azure access.
+# GitLab injects a short-lived signed JWT into AZURE_OIDC_TOKEN.
+# CI_JOB_JWT_V2 was removed in GitLab 17.0 — id_tokens is the current approach.
+.azure_id_token: &azure_id_token
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
+
+
+# =============================================================================
+# STAGE 1: SCAN
+# =============================================================================
+#
+# WHY "SHIFT LEFT"?
+#   Fixing a vulnerability costs:
+#     Developer's laptop:  $1   (you see it immediately)
+#     CI pipeline:         $10  (you see it in minutes)
+#     Production:          $100+ (incident response, CVE disclosure, downtime)
+#
+#   Running scans HERE (before any image is built) catches the cheapest bugs.
+#
+# ALL 4 JOBS RUN IN PARALLEL — total wait time = slowest job (~20s), not sum (~50s).
+#
+# PARALLEL SCAN TIMELINE:
+#
+#   Time:   0s ──────────────── 5s ──── 10s ──── 15s ──── 20s
+#           │                   │        │        │        │
+#   Gitleaks ████░░░░░░░░░░░░░░░ done    │        │        │
+#   Bandit   ████████░░░░░░░░░░░░░░░░░░  done     │        │
+#   pip-audit████████████░░░░░░░░░░░░░░░░░░░░░░░  done     │
+#   Checkov  ████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░  done
+#                                                           │
+#                                             All pass → Stage 2: build
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Gate 1: Gitleaks — Secret detection
+# -----------------------------------------------------------------------------
+#
+# WHAT IT DOES:
+#   Scans the ENTIRE GIT HISTORY (not just the latest commit) for secrets:
+#   API keys, passwords, tokens, private keys, connection strings.
+#
+# WHY GIT HISTORY MATTERS:
+#   Developers sometimes commit a secret, then immediately delete it.
+#   The deletion commit removes it from the working tree — but the secret
+#   is STILL IN GIT HISTORY. Anyone who clones the repo can `git log -p`
+#   and find it. Gitleaks scans every commit, not just HEAD.
+#
+# WHAT IT CATCHES (examples):
+#   ❌  AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
+#   ❌  password = "supersecret123"
+#   ❌  -----BEGIN RSA PRIVATE KEY-----
+#   ❌  ghp_xxxxxxxxxxxxxxxx  (GitHub PAT)
+#   ✅  DATABASE_URL = os.getenv("DATABASE_URL")  → fine, reading from env
+#
+gitleaks:
+  stage: scan
+  image: zricethezav/gitleaks:v8.18.4
+  script:
+    - echo "=== Gate 1: Gitleaks — scanning git history for secrets ==="
+    # --source . scans the current directory (full git history)
+    # --verbose prints each finding with file + line number
+    # Exit code 1 = secrets found (pipeline fails) | 0 = clean
+    - gitleaks detect --source . --verbose --redact
+  rules:
+    # Run on every push to any branch AND on merge requests
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+
+# -----------------------------------------------------------------------------
+# Gate 2: Bandit — Python SAST (Static Application Security Testing)
+# -----------------------------------------------------------------------------
+#
+# WHAT IT DOES:
+#   Reads Python source code (no execution needed) and flags dangerous patterns.
+#   It knows the Python standard library and common security antipatterns.
+#
+# WHAT IT CATCHES (examples):
+#
+#   Issue             | Bandit ID | Why dangerous
+#   ──────────────────┼───────────┼────────────────────────────────────────
+#   subprocess shell  | B602      | shell=True enables command injection
+#   hardcoded passwd  | B105,B106 | literal "password" in source
+#   weak hash MD5     | B303      | MD5/SHA1 broken for crypto use
+#   pickle.loads()    | B301      | arbitrary code execution on deserialization
+#   assert in prod    | B101      | disabled by Python -O flag, not a guard
+#   SQL f-string      | B608      | SQL injection via string formatting
+#
+# WHY SAST (not just tests)?
+#   Tests check if the code WORKS correctly.
+#   SAST checks if the code is SAFE — even if it "works".
+#   A SQL injection "works" — it returns data. Bandit flags it anyway.
+#
+bandit:
+  stage: scan
+  image: python:3.12-slim
+  script:
+    - echo "=== Gate 2: Bandit — Python static security analysis ==="
+    - pip install bandit[toml] --quiet
+    # -r  = recursive (scan all .py files)
+    # -ll = only report HIGH severity (skip low noise)
+    # -ii = only report HIGH confidence (skip guesses)
+    # app/backend/app/ = only our code, not dependencies
+    - bandit -r app/backend/app/ -ll -ii --format txt
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+
+# -----------------------------------------------------------------------------
+# Gate 3: pip-audit — Python dependency CVE check (SCA)
+# -----------------------------------------------------------------------------
+#
+# WHAT IT DOES:
+#   Checks every package in requirements.txt against two vulnerability databases:
+#   - PyPI Advisory Database (maintained by Python Security Response Team)
+#   - OSV (Open Source Vulnerabilities) — Google's database
+#
+# SCA vs SAST:
+#   SAST (Bandit) = YOUR code has a bug
+#   SCA (pip-audit) = A LIBRARY you use has a known CVE
+#
+# WHY THIS MATTERS:
+#   The Log4Shell vulnerability (CVE-2021-44228) was in a DEPENDENCY.
+#   Thousands of apps were vulnerable not because of their own code —
+#   but because they used log4j. pip-audit catches this class of vulnerability.
+#
+# EXAMPLE OUTPUT:
+#   Name         Version  ID                  Fix Versions
+#   ──────────── ──────── ─────────────────── ─────────────
+#   cryptography 3.4.7    GHSA-w7pp-m8wf-vj6r 41.0.0
+#   → means: upgrade cryptography to 41.0.0 to fix the CVE
+#
+pip-audit:
+  stage: scan
+  image: python:3.12-slim
+  script:
+    - echo "=== Gate 3: pip-audit — dependency CVE check ==="
+    - pip install pip-audit --quiet
+    # -r requirements.txt = scan only production deps (not dev tools)
+    # --progress-spinner=off = cleaner CI logs (no animated spinner)
+    - pip-audit -r app/backend/requirements.txt --progress-spinner=off
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+
+# -----------------------------------------------------------------------------
+# Gate 4: Checkov — IaC misconfiguration scanner
+# -----------------------------------------------------------------------------
+#
+# WHAT IT DOES:
+#   Scans Terraform files and Kubernetes manifests for security misconfigurations.
+#   Checks against 1000+ built-in policies based on CIS benchmarks and cloud
+#   security best practices.
+#
+# WHAT IT CATCHES (examples):
+#
+#   In Terraform:
+#   ❌ Storage account with public blob access enabled
+#   ❌ AKS cluster without RBAC enabled
+#   ❌ Key Vault without soft delete
+#   ❌ Resource without tags (cost + ownership tracking)
+#
+#   In Kubernetes manifests:
+#   ❌ Container running as root (runAsNonRoot: false)
+#   ❌ No resource limits (CPU/memory) → could starve other pods
+#   ❌ Privileged container (full host access)
+#   ❌ Image using 'latest' tag (not reproducible)
+#
+# WHY SCAN CONFIG, NOT JUST CODE?
+#   Most cloud breaches are not "hacked" — they're misconfigured.
+#   S3 bucket left public. Storage account with no encryption.
+#   Checkov is your last line of defence before `terraform apply`.
+#
+checkov:
+  stage: scan
+  image: bridgecrew/checkov:3.2.51
+  script:
+    - echo "=== Gate 4: Checkov — Terraform/K8s misconfiguration scan ==="
+    # Scan Terraform
+    - |
+      checkov -d terraform/ \
+        --framework terraform \
+        --quiet \
+        --compact \
+        --skip-check CKV_AZURE_131,CKV2_AZURE_31
+        # ↑ CKV_AZURE_131: AKS Authorized IP ranges — intentionally open for student project
+        # ↑ CKV2_AZURE_31: AKS Azure Policy addon — costs extra, skipped for budget
+    # Scan Kubernetes manifests (when they exist in Phase 4)
+    - |
+      if [ -d "k8s/" ]; then
+        checkov -d k8s/ \
+          --framework kubernetes \
+          --quiet \
+          --compact
+      else
+        echo "k8s/ directory not found yet — skipping K8s scan (Phase 4)"
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+
+# =============================================================================
+# STAGE 2: BUILD
+# =============================================================================
+#
+# WHAT HAPPENS HERE:
+#   1. Log into Azure via OIDC (no password stored)
+#   2. Log into ACR using the Azure CLI token
+#   3. Build the Docker image using multi-stage Dockerfile
+#   4. Push the image to ACR tagged with the git commit SHA
+#
+# WHY COMMIT SHA AS IMAGE TAG?
+#   Tag: acrdevsecops9nsi.azurecr.io/backend:a1b2c3d
+#                                                    ↑
+#                                             7-char git SHA
+#
+#   - Immutable: tag a1b2c3d ALWAYS refers to the same commit
+#   - Traceable: see an image in production → find the exact commit in GitLab
+#   - No collisions: 'latest' gets overwritten on every push
+#
+# WHY BUILD AFTER SCAN?
+#   Building is expensive (2-5 minutes). No point building an image
+#   if a Gitleaks scan would fail it anyway. Fail fast = save CI minutes.
+#
+# IMAGE NAMING:
+#
+#   ACR_LOGIN_SERVER/IMAGE_NAME:GIT_SHA
+#   │                │            │
+#   │                │            └── CI_COMMIT_SHORT_SHA (e.g. a1b2c3d)
+#   │                └────────────── backend or frontend
+#   └────────────────────────────── acrdevsecops9nsi.azurecr.io
+#
+# =============================================================================
+
+.build_template: &build_template
+  stage: build
+  image: mcr.microsoft.com/azure-cli:2.61.0
+  <<: *azure_id_token
+  before_script:
+    - *azure_login
+    # Install docker CLI inside the azure-cli image
+    - apt-get update -qq && apt-get install -y -qq docker.io
+    # Use Docker BuildKit for faster, more efficient builds
+    - export DOCKER_BUILDKIT=1
+  rules:
+    # Only build on pushes to main branch (not every feature branch)
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+
+
+build-backend:
+  <<: *build_template
+  script:
+    - echo "=== Stage 2: Building backend image ==="
+    - |
+      docker build \
+        --tag "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA" \
+        --tag "$ACR_LOGIN_SERVER/backend:latest" \
+        --file app/backend/Dockerfile \
+        app/backend/
+      # ↑ Two tags: commit SHA (permanent) + latest (convenience pointer)
+    - docker push "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
+    - docker push "$ACR_LOGIN_SERVER/backend:latest"
+    - echo "Pushed → $ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
+
+
+build-frontend:
+  <<: *build_template
+  script:
+    - echo "=== Stage 2: Building frontend image ==="
+    - |
+      docker build \
+        --tag "$ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA" \
+        --tag "$ACR_LOGIN_SERVER/frontend:latest" \
+        --file app/frontend/Dockerfile \
+        app/frontend/
+    - docker push "$ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA"
+    - docker push "$ACR_LOGIN_SERVER/frontend:latest"
+    - echo "Pushed → $ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA"
+
+
+# =============================================================================
+# STAGE 3: TEST (Gate 5 — Trivy)
+# =============================================================================
+#
+# WHAT TRIVY DOES:
+#   Pulls the image we just pushed to ACR and scans its LAYERS for:
+#   - OS packages with known CVEs (e.g. libssl, glibc)
+#   - Language packages inside the image (Python pip, Node npm)
+#   - Misconfigurations in the Dockerfile
+#
+# WHY TRIVY IS DIFFERENT FROM pip-audit (Gate 3):
+#
+#   pip-audit                          Trivy
+#   ─────────────────────────────────  ──────────────────────────────────────
+#   Reads requirements.txt             Reads the actual image layers
+#   Only Python packages               OS + Python + Node + everything
+#   No OS visibility                   Catches libssl CVEs, glibc bugs, etc.
+#   Fast (~15s)                        Slower (~60s) — has to pull the image
+#
+# EXAMPLE: A CVE in libssl inside the python:3.12-slim base image
+#   → pip-audit: MISSES IT (not in requirements.txt)
+#   → Trivy:     CATCHES IT (scans /usr/lib/x86_64-linux-gnu/libssl.so.3)
+#
+# SEVERITY LEVELS:
+#   CRITICAL → pipeline FAILS  (e.g. remote code execution)
+#   HIGH     → pipeline FAILS  (e.g. privilege escalation)
+#   MEDIUM   → WARNING only    (e.g. information disclosure)
+#   LOW      → ignored         (theoretical, no practical exploit)
+#
+# TRIVY SCAN FLOW:
+#
+#   Trivy job starts
+#        │
+#        ├── Pull image from ACR ──────── needs OIDC Azure login
+#        │
+#        ├── Unpack image layers ──────── reads each layer's filesystem
+#        │
+#        ├── Identify packages ────────── parses OS package DBs + pip/npm
+#        │
+#        ├── Match against CVE DBs ─────── NVD, GitHub Advisory, OSV
+#        │
+#        └── CRITICAL/HIGH found? ──── YES → fail ❌  |  NO → pass ✅
+#
+# =============================================================================
+
+.trivy_template: &trivy_template
+  stage: test
+  image: mcr.microsoft.com/azure-cli:2.61.0
+  <<: *azure_id_token
+  before_script:
+    - *azure_login
+    # Install Trivy
+    - |
+      apt-get update -qq
+      apt-get install -y -qq wget apt-transport-https gnupg
+      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | apt-key add -
+      echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" \
+        > /etc/apt/sources.list.d/trivy.list
+      apt-get update -qq && apt-get install -y -qq trivy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+
+
+trivy-backend:
+  <<: *trivy_template
+  script:
+    - echo "=== Gate 5: Trivy — scanning backend image for CVEs ==="
+    - |
+      trivy image \
+        --exit-code 1 \
+        --severity CRITICAL,HIGH \
+        --ignore-unfixed \
+        --format table \
+        "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA"
+      # --exit-code 1   → non-zero exit if vulnerabilities found (fails job)
+      # --ignore-unfixed → skip CVEs with no available fix (can't patch them)
+      # --format table  → human-readable output in CI logs
+
+
+trivy-frontend:
+  <<: *trivy_template
+  script:
+    - echo "=== Gate 5: Trivy — scanning frontend image for CVEs ==="
+    - |
+      trivy image \
+        --exit-code 1 \
+        --severity CRITICAL,HIGH \
+        --ignore-unfixed \
+        --format table \
+        "$ACR_LOGIN_SERVER/frontend:$CI_COMMIT_SHORT_SHA"
+
+
+# =============================================================================
+# STAGE 4: SIGN (Gate 6 — Cosign)
+# =============================================================================
+#
+# WHAT IS IMAGE SIGNING AND WHY DOES IT MATTER?
+#
+#   Problem without signing:
+#   ┌────────────────────────────────────────────────────────────┐
+#   │  Attacker compromises ACR credentials                      │
+#   │  Pushes a malicious image: backend:a1b2c3d                 │
+#   │  Your cluster pulls it thinking it's legitimate            │
+#   │  Malicious code runs inside your pods                      │
+#   └────────────────────────────────────────────────────────────┘
+#
+#   Solution with Cosign:
+#   ┌────────────────────────────────────────────────────────────┐
+#   │  CI pipeline signs every image with a private key          │
+#   │  Kyverno (Phase 5) BLOCKS any unsigned image               │
+#   │  Even if attacker pushes malicious image → BLOCKED         │
+#   │  Only images signed by THIS pipeline can run               │
+#   └────────────────────────────────────────────────────────────┘
+#
+# HOW COSIGN SIGNING WORKS:
+#
+#   CI Pipeline                       ACR
+#        │                             │
+#        │── build image ────────────▶ │ (backend:a1b2c3d)
+#        │                             │
+#        │── compute SHA256 digest ─── │ sha256:abc123...
+#        │                             │
+#        │── sign digest with          │
+#        │   COSIGN_KEY (private key)  │
+#        │                             │
+#        │── push signature ─────────▶ │ (backend:sha256-abc123....sig)
+#        │                             │
+#                                      │
+#   AKS + Kyverno                      │
+#        │── pull image ─────────────▶ │ (backend:a1b2c3d)
+#        │── fetch signature ─────────▶│ (backend:sha256-abc123....sig)
+#        │── verify signature          │
+#        │   with COSIGN_PUB_KEY       │
+#        │── ✅ signature valid → run  │
+#        │── ❌ no signature → BLOCK   │
+#
+# SETUP (one-time — do before first pipeline run):
+#   cosign generate-key-pair
+#   → creates cosign.key (private) and cosign.pub (public)
+#   Store cosign.key content in GitLab CI Variable: COSIGN_KEY (masked)
+#   Store cosign.pub content in GitLab CI Variable: COSIGN_PUB_KEY (not masked)
+#   Never commit cosign.key to git.
+#
+# =============================================================================
+
+.cosign_template: &cosign_template
+  stage: sign
+  image: mcr.microsoft.com/azure-cli:2.61.0
+  <<: *azure_id_token
+  before_script:
+    - *azure_login
+    # Install Cosign
+    - |
+      apt-get update -qq && apt-get install -y -qq wget
+      wget -qO /usr/local/bin/cosign \
+        https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64
+      chmod +x /usr/local/bin/cosign
+    # Write the private key from CI variable to a temp file
+    # (cosign needs it as a file, not an env var)
+    - echo "$COSIGN_KEY" > /tmp/cosign.key
+  after_script:
+    # Always clean up the private key — even if the job fails
+    - rm -f /tmp/cosign.key
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+
+
+cosign-backend:
+  <<: *cosign_template
+  script:
+    - echo "=== Gate 6: Cosign — signing backend image ==="
+    - |
+      # Get the image digest (sha256 hash of the image manifest)
+      # We sign the DIGEST, not the tag — tags are mutable, digests are not
+      IMAGE_DIGEST=$(
+        docker manifest inspect \
+          "$ACR_LOGIN_SERVER/backend:$CI_COMMIT_SHORT_SHA" \
+          --verbose 2>/dev/null | \
+          python3 -c "
+      import sys, json
+      data = json.load(sys.stdin)
+      if isinstance(data, list):
+          print(data[0]['Descriptor']['digest'])
+      else:
+          print(data['config']['digest'])
+      " 2>/dev/null || \
+        az acr manifest show-metadata \
+          --registry "${ACR_LOGIN_SERVER%%.*}" \
+          --name "backend:$CI_COMMIT_SHORT_SHA" \
+          --query "digest" -o tsv
+      )
+    - echo "Signing digest: $IMAGE_DIGEST"
+    - |
+      COSIGN_PASSWORD="" cosign sign \
+        --key /tmp/cosign.key \
+        --yes \
+        "$ACR_LOGIN_SERVER/backend@$IMAGE_DIGEST"
+
+
+cosign-frontend:
+  <<: *cosign_template
+  script:
+    - echo "=== Gate 6: Cosign — signing frontend image ==="
+    - |
+      IMAGE_DIGEST=$(
+        az acr manifest show-metadata \
+          --registry "${ACR_LOGIN_SERVER%%.*}" \
+          --name "frontend:$CI_COMMIT_SHORT_SHA" \
+          --query "digest" -o tsv
+      )
+    - echo "Signing digest: $IMAGE_DIGEST"
+    - |
+      COSIGN_PASSWORD="" cosign sign \
+        --key /tmp/cosign.key \
+        --yes \
+        "$ACR_LOGIN_SERVER/frontend@$IMAGE_DIGEST"
+
+
+# =============================================================================
+# STAGE 5: NOTIFY
+# =============================================================================
+#
+# WHY SLACK NOTIFICATIONS?
+#   "Never watch a terminal" — production engineers don't stare at dashboards.
+#   Notifications come to you. Pipeline finishes → Slack message → you know.
+#
+# TWO SCENARIOS:
+#
+#   ✅ SUCCESS notification (when pipeline reaches this stage = all gates passed):
+#   ┌────────────────────────────────────────────────────────────┐
+#   │ ✅ Pipeline PASSED — devsecops-project                     │
+#   │ Branch: main | Commit: a1b2c3d                             │
+#   │ Images signed and pushed to ACR                            │
+#   │ Ready to deploy via ArgoCD                                 │
+#   └────────────────────────────────────────────────────────────┘
+#
+#   ❌ FAILURE notification (when: on_failure — runs even if earlier jobs fail):
+#   ┌────────────────────────────────────────────────────────────┐
+#   │ ❌ Pipeline FAILED — devsecops-project                     │
+#   │ Branch: main | Commit: a1b2c3d | Stage: scan               │
+#   │ Failed job: bandit                                         │
+#   │ See: https://gitlab.com/ahmed_marzouki/devsecops-project/  │
+#   └────────────────────────────────────────────────────────────┘
+#
+# WEBHOOK URL IS A SECRET:
+#   SLACK_WEBHOOK_CI is stored as a masked + protected GitLab CI variable.
+#   It never appears in logs (masked) and only runs on protected branches (protected).
+#
+# =============================================================================
+
+notify-success:
+  stage: notify
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache curl --quiet
+  script:
+    - echo "=== Notify: Sending SUCCESS notification to Slack ==="
+    - |
+      curl -s -X POST "$SLACK_WEBHOOK_CI" \
+        -H 'Content-type: application/json' \
+        --data "{
+          \"attachments\": [{
+            \"color\": \"good\",
+            \"blocks\": [
+              {
+                \"type\": \"section\",
+                \"text\": {
+                  \"type\": \"mrkdwn\",
+                  \"text\": \"*✅ Pipeline PASSED* — \`devsecops-project\`\n*Branch:* \`$CI_COMMIT_BRANCH\` | *Commit:* \`$CI_COMMIT_SHORT_SHA\`\n*Message:* $CI_COMMIT_MESSAGE\n\nAll 6 security gates passed. Images signed and pushed to ACR.\n*Ready for ArgoCD deploy (Phase 4).*\"
+                }
+              },
+              {
+                \"type\": \"actions\",
+                \"elements\": [{
+                  \"type\": \"button\",
+                  \"text\": { \"type\": \"plain_text\", \"text\": \"View Pipeline\" },
+                  \"url\": \"$CI_PIPELINE_URL\"
+                }]
+              }
+            ]
+          }]
+        }"
+  rules:
+    # Only run on main branch, only on success
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: on_success
+
+
+notify-failure:
+  stage: notify
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache curl --quiet
+  script:
+    - echo "=== Notify: Sending FAILURE notification to Slack ==="
+    - |
+      curl -s -X POST "$SLACK_WEBHOOK_CI" \
+        -H 'Content-type: application/json' \
+        --data "{
+          \"attachments\": [{
+            \"color\": \"danger\",
+            \"blocks\": [
+              {
+                \"type\": \"section\",
+                \"text\": {
+                  \"type\": \"mrkdwn\",
+                  \"text\": \"*❌ Pipeline FAILED* — \`devsecops-project\`\n*Branch:* \`$CI_COMMIT_BRANCH\` | *Commit:* \`$CI_COMMIT_SHORT_SHA\`\n*Message:* $CI_COMMIT_MESSAGE\n\nA security gate or build step failed. Check the pipeline logs.\"
+                }
+              },
+              {
+                \"type\": \"actions\",
+                \"elements\": [{
+                  \"type\": \"button\",
+                  \"text\": { \"type\": \"plain_text\", \"text\": \"View Failed Job\" },
+                  \"url\": \"$CI_PIPELINE_URL\"
+                }]
+              }
+            ]
+          }]
+        }"
+  rules:
+    # Run on main branch EVEN IF earlier stages failed
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: on_failure
