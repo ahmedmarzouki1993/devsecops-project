@@ -17,10 +17,7 @@ spec:
       labels:
         app.kubernetes.io/name: database
         app.kubernetes.io/part-of: devsecops-project
-        # Required label for Workload Identity webhook injection
-        azure.workload.identity/use: "true"
     spec:
-      serviceAccountName: devsecops-app
       securityContext:
         runAsUser: 999
         fsGroup: 999
