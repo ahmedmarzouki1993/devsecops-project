@@ -38,6 +38,11 @@ spec:
           env:
             - name: DATABASE_URL
               value: "postgresql://appuser:apppassword@database:5432/appdb"
+            # Prevent Python from writing .pyc bytecode files to the read-only image layers.
+            # pyc files are a compilation cache — unnecessary in containers since the image
+            # is rebuilt on every release anyway.
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
           # Resource limits prevent one pod from starving others on the single node
           resources:
             requests:
@@ -62,10 +67,19 @@ spec:
             periodSeconds: 10
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # readOnlyRootFilesystem: true — FastAPI/uvicorn cannot write to image layers.
+            # Python temp files go to /tmp (emptyDir below).
+            readOnlyRootFilesystem: true
             # PSS restricted: drop ALL Linux capabilities.
             # FastAPI/uvicorn needs no special capabilities — no raw sockets,
             # no kernel module loading, no setuid binaries.
             capabilities:
               drop:
                 - ALL
+          volumeMounts:
+            # Python uses /tmp for tempfile operations; uvicorn may also write there
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -56,7 +56,11 @@ spec:
             periodSeconds: 10
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # readOnlyRootFilesystem: true — nginx cannot write to its image layers.
+            # All writable paths are covered by emptyDir volumes below:
+            #   /tmp           — nginx pid + all temp file paths (see nginx.conf)
+            #   /var/log/nginx — access.log + error.log
+            readOnlyRootFilesystem: true
             # PSS restricted: drop all capabilities — nginx serves static
             # files and needs no special kernel privileges
             capabilities:
@@ -68,7 +72,18 @@ spec:
               mountPath: /etc/nginx/nginx.conf
               subPath: nginx.conf
               readOnly: true
+            # Writable scratch space for nginx pid + all temp file redirects in nginx.conf
+            - name: tmp
+              mountPath: /tmp
+            # Writable log directory (access.log + error.log)
+            - name: nginx-logs
+              mountPath: /var/log/nginx
       volumes:
         - name: nginx-main-config
           configMap:
             name: nginx-main-config
+        # emptyDir: exists only for the lifetime of the pod, in memory
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-logs
+          emptyDir: {}

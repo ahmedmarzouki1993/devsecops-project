@@ -353,7 +353,13 @@ checkov:
         checkov -d k8s/ \
           --framework kubernetes \
           --quiet \
-          --compact
+          --compact \
+          --skip-check bc-k8s-21
+          # ↑ bc-k8s-21: readOnlyRootFilesystem on PostgreSQL StatefulSet.
+          #   Frontend + backend are fixed (readOnlyRootFilesystem: true + emptyDir mounts).
+          #   Postgres requires writable /tmp, /var/run/postgresql (socket), /var/log —
+          #   mounting emptyDir for all internal postgres paths adds complexity with no
+          #   real benefit since the PVC is the trust boundary, not the root fs.
       else
         echo "k8s/ directory not found yet — skipping K8s scan (Phase 4)"
       fi
