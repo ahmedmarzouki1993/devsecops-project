@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/name: database
         app.kubernetes.io/part-of: devsecops-project
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
