@@ -117,7 +117,7 @@ collaborator gets the same setup.
 | **Owner**          | Ahmed Marzouki — Cloud Architecture & DevOps Engineer     |
 | **Repository**     | GitLab (private) — `gitlab.com/<USERNAME>/devsecops-project` |
 | **Cloud**          | Microsoft Azure (Student Pack — $100 credit limit)        |
-| **Current phase**  | Phase 5 — Runtime security                               |
+| **Current phase**  | Phase 6 — Secrets management                             |
 
 ---
 
@@ -272,7 +272,7 @@ Every layer exists for a reason that maps to a real-world production concern:
 | 2     | Application development        | FastAPI, React basics, Docker multi-stage builds, security | ✅ Complete   |
 | 3     | CI pipeline + security gates   | GitLab CI, SAST, SCA, container scanning, Slack notify     | ✅ Complete   |
 | 4     | GitOps deployment (ArgoCD)     | GitOps principles, Kustomize, NGINX Ingress, Slack notify  | ✅ Complete   |
-| 5     | Runtime security               | Kyverno admission, Falco detection, Slack alerts           | 🔲 Pending   |
+| 5     | Runtime security               | Kyverno admission, Falco detection, Slack alerts           | ✅ Complete   |
 | 6     | Secrets management             | Key Vault, CSI Secrets Store, workload identity            | 🔲 Pending   |
 | 7     | Monitoring + alerting          | Prometheus, Grafana, dashboards, Slack alerts              | 🔲 Pending   |
 | 8     | Hardening & documentation      | Network policies, Pod Security, RBAC, README               | 🔲 Pending   |
