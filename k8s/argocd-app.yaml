@@ -7,8 +7,9 @@ metadata:
   labels:
     app.kubernetes.io/part-of: devsecops-project
   annotations:
-    # Subscribe this app to Slack notifications via argocd-notifications
-    notifications.argoproj.io/subscribe.on-synced.slack-deploy: ""
+    # Subscribe this app to Slack notifications via argocd-notifications.
+    # Only warning-level events: failures and degraded health.
+    # on-synced (success) is intentionally excluded — not actionable.
     notifications.argoproj.io/subscribe.on-sync-failed.slack-deploy: ""
     notifications.argoproj.io/subscribe.on-degraded.slack-deploy: ""
 spec:

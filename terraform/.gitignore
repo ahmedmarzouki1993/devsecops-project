@@ -1,0 +1,28 @@
+# Terraform state — contains sensitive values (passwords, certs, resource IDs)
+# State is stored remotely in Azure Storage — never commit locally
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Real variable values — contains subscription ID, secrets
+# Only the .example version is committed
+terraform.tfvars
+
+# Terraform plan output — binary file, contains full resource diff
+# Safe to gitignore since CI regenerates it on each run
+tfplan
+*.tfplan
+
+# Terraform working directory — downloaded providers (huge, not committed)
+.terraform/
+.terraform.lock.hcl  # commit this if you want reproducible provider versions across team
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files (local developer overrides — never shared)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

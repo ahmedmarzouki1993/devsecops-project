@@ -1,0 +1,96 @@
+# docker-compose.yml — local full-stack development environment
+#
+# WHY docker-compose?
+#   In Kubernetes (Phase 4) we run everything in AKS. But for local development
+#   and testing, spinning up AKS every time would cost money and take minutes.
+#   docker-compose lets you run the full 3-tier stack on your laptop in seconds.
+#
+# WHAT is running here?
+#   postgres  — the database (same version as production: postgres:16-alpine)
+#   backend   — FastAPI app, auto-reloads on code changes (--reload flag)
+#   frontend  — React app built by Nginx (static files)
+#
+# HOW to use:
+#   docker compose up --build        # first run (builds images)
+#   docker compose up                # subsequent runs (no rebuild)
+#   docker compose down              # stop everything
+#   docker compose down -v           # stop AND delete the postgres volume (fresh DB)
+#
+# Access:
+#   Frontend:  http://localhost:3000
+#   Backend:   http://localhost:8000
+#   API docs:  http://localhost:8000/docs   (Swagger UI)
+#   DB:        localhost:5432 (user: postgres, pass: postgres, db: devsecops)
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  # Pinned to 16-alpine — same as production. Never use 'latest'.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # These are local dev credentials only — never used in production.
+      # In K8s (Phase 6), credentials come from Azure Key Vault via CSI driver.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: devsecops
+    ports:
+      # Expose DB locally so you can connect with psql or DBeaver for debugging.
+      # In K8s, PostgreSQL is a headless Service — not exposed outside the cluster.
+      - "5432:5432"
+    volumes:
+      # Named volume persists data between `docker compose up/down` restarts.
+      # Run `docker compose down -v` to wipe and start fresh.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Backend waits for this check to pass before starting (see depends_on below).
+      # pg_isready exits 0 when PostgreSQL is accepting connections.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d devsecops"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── FastAPI backend ───────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./app/backend
+      dockerfile: Dockerfile
+    environment:
+      # Override the default DB URL to point at the postgres service above.
+      # docker-compose networking: service names resolve as hostnames (postgres → postgres container)
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/devsecops
+      APP_ENV: development
+      LOG_LEVEL: info
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        # Start backend only after postgres is healthy (accepting connections).
+        # Without this, FastAPI's lifespan create_tables() would fail with
+        # "connection refused" if postgres is still initializing.
+        condition: service_healthy
+    # Override CMD for development: --reload watches for file changes and restarts.
+    # We also mount the source code so changes are picked up without rebuilding.
+    # In production (K8s), the image runs without --reload and no bind mount.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "info"]
+    volumes:
+      # Bind mount source code — edit locally, changes reflect instantly.
+      # Only the app/ directory, not tests/ or other dev files.
+      - ./app/backend/app:/app/app
+
+  # ── React frontend ────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: Dockerfile
+    ports:
+      # Map container port 8080 (non-root nginx) to host port 3000.
+      - "3000:8080"
+    depends_on:
+      - backend
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+# Docker manages this volume. It persists across container restarts.
+# Location: /var/lib/docker/volumes/devsecops-project_postgres_data/
+volumes:
+  postgres_data:

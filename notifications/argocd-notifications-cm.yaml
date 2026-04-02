@@ -70,7 +70,8 @@ data:
     - when: app.status.health.status == 'Degraded'
       send: [app-degraded]
 
+  # Only fire on failures and degraded health — success syncs are informational,
+  # not actionable. Minimum alert level = warning (failures + degraded only).
   defaultTriggers: |
-    - on-synced
     - on-sync-failed
     - on-degraded

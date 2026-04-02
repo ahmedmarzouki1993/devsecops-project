@@ -1,0 +1,40 @@
+# falco-values.yaml — Helm values for Falco + Falcosidekick
+#
+# Install:
+#   helm install falco falcosecurity/falco \
+#     --namespace falco --create-namespace \
+#     -f security/falco/falco-values.yaml \
+#     --set falcosidekick.config.slack.webhookurl="$SLACK_WEBHOOK_ALERTS"
+#
+# Upgrade:
+#   helm upgrade falco falcosecurity/falco \
+#     --namespace falco \
+#     -f security/falco/falco-values.yaml \
+#     --set falcosidekick.config.slack.webhookurl="$SLACK_WEBHOOK_ALERTS"
+
+driver:
+  # modern_ebpf: no kernel module compile, works on AKS default kernel
+  kind: modern_ebpf
+
+falco:
+  json_output: true
+  http_output:
+    enabled: true
+    url: http://falco-falcosidekick:2801
+
+falcosidekick:
+  enabled: true
+  config:
+    slack:
+      # SLACK_WEBHOOK_ALERTS is injected at install time — never hardcode here.
+      # webhookurl set via --set at helm install/upgrade
+      webhookurl: ""
+      # WARNING = only real threats reach Slack (shell in container, file tampering,
+      # privilege escalation). Filters out NOTICE/INFO noise from system pods.
+      # Priority ladder (high → low): emergency, alert, critical, error, warning, notice, informational, debug
+      minimumpriority: warning
+      # Show the full rule output in the Slack message body
+      messageformat: |
+        :rotating_light: *{{.Priority}}* — {{.Rule}}
+        *Pod:* {{index .OutputFields "k8s.pod.name"}} (ns: {{index .OutputFields "k8s.ns.name"}})
+        *Detail:* {{.Output}}

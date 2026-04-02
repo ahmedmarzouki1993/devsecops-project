@@ -1,0 +1,43 @@
+# =============================================================================
+# terraform.tfvars.example — Template for your personal terraform.tfvars
+# =============================================================================
+#
+# INSTRUCTIONS:
+#   1. Copy this file:  cp terraform.tfvars.example terraform.tfvars
+#   2. Fill in YOUR values below
+#   3. terraform.tfvars is in .gitignore — it will NEVER be committed
+#
+# WHY TWO FILES?
+#   terraform.tfvars.example  → committed to git (safe template, no real values)
+#   terraform.tfvars          → gitignored (your real values, never shared)
+#
+# HOW TO FIND YOUR VALUES:
+#   subscription_id: az account show --query id -o tsv
+# =============================================================================
+
+# Your Azure subscription ID (find with: az account show --query id -o tsv)
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Azure region — keep uaenorth for lowest latency in UAE
+location = "uaenorth"
+
+# Project identifier — used in resource names (keep lowercase alphanumeric)
+project_name = "devsecops"
+
+# Environment tag
+environment = "dev"
+
+# Kubernetes version (check available: az aks get-versions -l uaenorth -o table)
+kubernetes_version = "1.32"
+
+# AKS node configuration — DO NOT increase node_count without checking budget
+node_count      = 1
+node_vm_size    = "Standard_B2s_v2"
+os_disk_size_gb = 30
+
+# ACR — Basic is sufficient for this project (~$5/mo)
+acr_sku = "Basic"
+
+# Key Vault
+kv_sku                        = "standard"
+kv_soft_delete_retention_days = 7
