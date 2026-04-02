@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/name: database
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  # AKS default StorageClass provisions an Azure Disk automatically
+  accessModes:
+    - ReadWriteOnce   # Azure Disk: only one node can mount at a time (fine for single-node)
+  resources:
+    requests:
+      storage: 2Gi    # Small enough for Student Pack budget, enough for dev data

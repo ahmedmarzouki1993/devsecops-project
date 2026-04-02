@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devsecops-ingress
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+  annotations:
+    # Route /api/* to the backend, everything else to the frontend
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  # ingressClassName tells K8s which Ingress Controller handles this resource
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # Backend: all requests under /api/ are proxied to the FastAPI service
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # Frontend: catch-all — React SPA handles its own client-side routing
+          - path: /()(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

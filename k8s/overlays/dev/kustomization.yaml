@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Dev overlay: inherits everything from base and applies dev-specific patches.
+# ArgoCD points to THIS directory (k8s/overlays/dev/) as the app source.
+
+bases:
+  - ../../base
+
+# namePrefix/nameSuffix can be added here to isolate environments if needed.
+# For now, dev mirrors base with just an image tag override.
+
+# Image tags: the CI pipeline updates these values with $CI_COMMIT_SHORT_SHA
+# after a successful build. ArgoCD detects the change and auto-syncs.
+images:
+  - name: acrdevsecops9nsi.azurecr.io/backend
+    newTag: latest   # CI will replace "latest" with the commit SHA
+  - name: acrdevsecops9nsi.azurecr.io/frontend
+    newTag: latest   # CI will replace "latest" with the commit SHA

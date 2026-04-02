@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/name: database
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  selector:
+    app.kubernetes.io/name: database
+  ports:
+    - port: 5432
+      targetPort: 5432
+  # ClusterIP: database is internal only — never exposed outside the cluster
+  type: ClusterIP

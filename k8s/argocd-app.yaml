@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devsecops-project
+  # ArgoCD resources live in the argocd namespace, not our app namespace
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  project: default
+
+  source:
+    # Point ArgoCD at the GitLab repo — update <USERNAME> with your GitLab username
+    repoURL: https://gitlab.com/ahmed_marzouki/devsecops-project.git
+    targetRevision: main
+    # Use the dev overlay (which includes base) as the source of truth
+    path: k8s/overlays/dev
+
+  destination:
+    # Deploy to the same cluster where ArgoCD is running
+    server: https://kubernetes.default.svc
+    namespace: devsecops-project
+
+  syncPolicy:
+    automated:
+      # Automatically sync when Git changes are detected
+      prune: true       # Remove K8s resources deleted from Git
+      selfHeal: true    # Revert manual kubectl changes (Git is the source of truth)
+    syncOptions:
+      - CreateNamespace=true   # Creates devsecops-project namespace if missing
