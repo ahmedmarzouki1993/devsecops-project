@@ -9,6 +9,10 @@ metadata:
     version: latest
 spec:
   replicas: 1
+  # Recreate: terminate old pod before starting new one.
+  # Same single-node CPU constraint as backend.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: frontend

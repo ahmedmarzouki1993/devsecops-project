@@ -9,6 +9,11 @@ metadata:
     version: latest
 spec:
   replicas: 1
+  # Recreate: terminate old pod before starting new one.
+  # RollingUpdate deadlocks on a single node — it needs 2 pods simultaneously
+  # but the node doesn't have spare CPU for the surge pod.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: backend
