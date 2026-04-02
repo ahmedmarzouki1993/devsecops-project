@@ -4,50 +4,62 @@ metadata:
   name: argocd-notifications-cm
   namespace: argocd
 data:
-  # ── Notification services ────────────────────────────────────────────────────
-  # Slack service uses the webhook URL stored in the notifications secret.
-  # The secret key is referenced as $slack-webhook (see argocd-notifications-secret).
-  service.slack: |
-    token: $slack-webhook
-    apiURL: https://hooks.slack.com/services
+  # ── Notification service ─────────────────────────────────────────────────────
+  # Named webhook instance — the name "slack-deploy" must match the template
+  # block names and the annotation keys below.
+  service.webhook.slack-deploy: |
+    url: $slack-webhook
+    headers:
+      - name: Content-Type
+        value: application/json
 
   # ── Notification templates ───────────────────────────────────────────────────
   template.app-synced: |
-    slack:
-      attachments: |
-        [{
-          "color": "#18be52",
-          "title": "✅ {{ .app.metadata.name }} synced",
-          "text": "Environment: *dev*\nRevision: `{{ .app.status.sync.revision | trunc 7 }}`\nStatus: *{{ .app.status.health.status }}*",
-          "footer": "ArgoCD • #deployments",
-          "ts": {{ now | unixEpoch }}
-        }]
+    webhook:
+      slack-deploy:
+        method: POST
+        body: |
+          {
+            "attachments": [{
+              "color": "#18be52",
+              "title": "\u2705 {{.app.metadata.name}} synced",
+              "text": "Environment: *dev*\nRevision: `{{.app.status.sync.revision | trunc 7}}`\nStatus: *{{.app.status.health.status}}*",
+              "footer": "ArgoCD \u2022 #deployments"
+            }]
+          }
 
   template.app-sync-failed: |
-    slack:
-      attachments: |
-        [{
-          "color": "#E96D76",
-          "title": "❌ {{ .app.metadata.name }} sync FAILED",
-          "text": "Environment: *dev*\nRevision: `{{ .app.status.sync.revision | trunc 7 }}`\nMessage: {{ .app.status.conditions | map (attr \"message\") | join \", \" }}",
-          "footer": "ArgoCD • #deployments",
-          "ts": {{ now | unixEpoch }}
-        }]
+    webhook:
+      slack-deploy:
+        method: POST
+        body: |
+          {
+            "attachments": [{
+              "color": "#E96D76",
+              "title": "\u274c {{.app.metadata.name}} sync FAILED",
+              "text": "Environment: *dev*\nRevision: `{{.app.status.sync.revision | trunc 7}}`\nPhase: {{.app.status.operationState.phase}}",
+              "footer": "ArgoCD \u2022 #deployments"
+            }]
+          }
 
   template.app-degraded: |
-    slack:
-      attachments: |
-        [{
-          "color": "#E96D76",
-          "title": "⚠️ {{ .app.metadata.name }} is Degraded",
-          "text": "Environment: *dev*\nHealth: *{{ .app.status.health.status }}*\nCheck the ArgoCD UI for details.",
-          "footer": "ArgoCD • #deployments",
-          "ts": {{ now | unixEpoch }}
-        }]
+    webhook:
+      slack-deploy:
+        method: POST
+        body: |
+          {
+            "attachments": [{
+              "color": "#E96D76",
+              "title": "\u26a0\ufe0f {{.app.metadata.name}} is Degraded",
+              "text": "Environment: *dev*\nHealth: *{{.app.status.health.status}}*",
+              "footer": "ArgoCD \u2022 #deployments"
+            }]
+          }
 
-  # ── Triggers (when to fire) ───────────────────────────────────────────────────
+  # ── Triggers ─────────────────────────────────────────────────────────────────
   trigger.on-synced: |
     - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+      oncePer: app.status.sync.revision
       send: [app-synced]
 
   trigger.on-sync-failed: |
@@ -58,7 +70,6 @@ data:
     - when: app.status.health.status == 'Degraded'
       send: [app-degraded]
 
-  # Default subscriptions — every app with the annotation gets these triggers
   defaultTriggers: |
     - on-synced
     - on-sync-failed
