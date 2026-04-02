@@ -30,6 +30,9 @@ spec:
         - name: frontend
           image: acrdevsecops9nsi.azurecr.io/frontend:latest
           imagePullPolicy: IfNotPresent
+          # Override pid path — Dockerfile sed targeted /var/run/nginx.pid but
+          # nginx 1.27 uses /run/nginx.pid. Pass it via -g to avoid permission error.
+          command: ["nginx", "-g", "daemon off; pid /tmp/nginx.pid;"]
           ports:
             - containerPort: 8080
           # Resource limits prevent one pod from starving others on the single node
