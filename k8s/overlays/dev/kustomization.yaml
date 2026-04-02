@@ -14,6 +14,6 @@ bases:
 # after a successful build. ArgoCD detects the change and auto-syncs.
 images:
   - name: acrdevsecops9nsi.azurecr.io/backend
-    newTag: latest   # CI will replace "latest" with the commit SHA
+    newTag: "914a03f9"   # CI updates this with $CI_COMMIT_SHORT_SHA on each push
   - name: acrdevsecops9nsi.azurecr.io/frontend
-    newTag: latest   # CI will replace "latest" with the commit SHA
+    newTag: "914a03f9"   # CI updates this with $CI_COMMIT_SHORT_SHA on each push
