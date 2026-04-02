@@ -19,12 +19,13 @@ spec:
         app.kubernetes.io/part-of: devsecops-project
         version: latest
     spec:
-      # Non-root: nginx:1.27-alpine uses UID 101 (nginx user).
-      # We set runAsNonRoot but do NOT override runAsUser so the
-      # Dockerfile's USER nginx (101) is respected — avoids /var/cache/nginx
-      # permission errors when forcing an arbitrary UID.
+      # Non-root: nginx:1.27-alpine defines the nginx user as UID 101.
+      # runAsUser must be numeric — K8s cannot resolve named users from the image
+      # manifest, so "USER nginx" alone fails the runAsNonRoot check.
       securityContext:
         runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
       containers:
         - name: frontend
           image: acrdevsecops9nsi.azurecr.io/frontend:latest
