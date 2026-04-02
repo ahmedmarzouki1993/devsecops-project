@@ -12,6 +12,8 @@
 #   auditable, and works with Privileged Identity Management (PIM) in prod.
 # =============================================================================
 
+# checkov:skip=CKV_AZURE_189: "Public network access required — CSI Secrets Store driver accesses KV from AKS over public endpoint (no VNet peering in student setup)"
+# checkov:skip=CKV2_AZURE_32: "Private endpoint requires VNet integration and private DNS zone — out of scope for student budget"
 resource "azurerm_key_vault" "this" {
   # Name max 24 chars. "kv-devsecops-ab12" = 18 chars — safe.
   name                = "kv-${var.project_name}-${var.suffix}"
@@ -24,14 +26,22 @@ resource "azurerm_key_vault" "this" {
   # 7 = minimum — faster cleanup in dev. Use 90 in production for compliance.
   soft_delete_retention_days = var.soft_delete_retention_days
 
-  # Purge protection: if true, nobody can permanently delete for retention_days.
-  # Keep false in dev so terraform destroy works cleanly.
-  # Set true in production for compliance (PCI-DSS, ISO27001).
-  purge_protection_enabled = false
+  # Purge protection: prevents permanent deletion during retention period.
+  # Required by CKV_AZURE_110 and CKV_AZURE_42 (CIS Azure benchmark).
+  # NOTE: enabling this means `terraform destroy` will leave the KV in a soft-deleted
+  # state for soft_delete_retention_days — run `az keyvault purge` manually if needed.
+  purge_protection_enabled = true
 
   # Use Azure RBAC instead of legacy access policies.
   # rbac_authorization_enabled = true means roles (below) control all access.
   rbac_authorization_enabled = true
+
+  # Firewall: deny all public traffic by default, allow Azure services (CSI driver, Terraform).
+  # CKV_AZURE_109: network ACLs required by CIS Azure benchmark.
+  network_acls {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
 
   tags = var.tags
 }

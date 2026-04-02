@@ -8,6 +8,16 @@
 #   without touching ACR or Key Vault code.
 # =============================================================================
 
+# checkov:skip=CKV_AZURE_115: "Private cluster requires private runner or VPN — GitLab CI uses public runners"
+# checkov:skip=CKV_AZURE_6:   "API server IP ranges not set — GitLab CI runners use dynamic IPs"
+# checkov:skip=CKV_AZURE_170: "Paid SLA tier costs ~$70/mo — exceeds student budget"
+# checkov:skip=CKV_AZURE_116: "Azure Policy add-on: Kyverno already enforces admission policies in-cluster"
+# checkov:skip=CKV_AZURE_141: "Local admin account: AAD integration not configured in student tenancy"
+# checkov:skip=CKV_AZURE_117: "Disk encryption set requires a separate DES resource — cost and complexity out of scope"
+# checkov:skip=CKV_AZURE_227: "Temp disk encryption requires disk encryption set — same as above"
+# checkov:skip=CKV_AZURE_226: "Ephemeral OS disks not supported on Standard_B2s VM size"
+# checkov:skip=CKV_AZURE_232: "Only-system-pods taint requires a second node pool — single-node budget constraint"
+# checkov:skip=CKV2_AZURE_29: "Azure CNI requires more VNet IPs — kubenet is intentional choice for single-node dev cluster"
 resource "azurerm_kubernetes_cluster" "this" {
   name                = "aks-${var.project_name}"
   resource_group_name = var.resource_group_name
@@ -22,6 +32,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     node_count      = var.node_count
     os_disk_size_gb = var.os_disk_size_gb
     os_disk_type    = "Managed"
+    max_pods        = 50 # CKV_AZURE_168: minimum 50 pods per node required by CIS benchmark
 
     node_labels = {
       "nodepool-type" = "system"
@@ -43,6 +54,18 @@ resource "azurerm_kubernetes_cluster" "this" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
+  # ── Azure Monitor metrics ──────────────────────────────────────────────────
+  # CKV_AZURE_4: enables container insights / Azure Monitor for the cluster.
+  # Lightweight — only activates the metrics pipeline, no extra cost at this scale.
+  monitor_metrics {}
+
+  # ── Secrets Store CSI auto-rotation ───────────────────────────────────────
+  # CKV_AZURE_172: automatically re-syncs Key Vault secrets into pods when
+  # the secret value changes in Key Vault — no pod restart required.
+  key_vault_secrets_provider {
+    secret_rotation_enabled = true
+  }
+
   # ── Auto-upgrade channel ───────────────────────────────────────────────────
   # "patch": AKS automatically upgrades to the latest stable patch version
   # within the current minor version. Safe for production — no breaking changes.
@@ -53,7 +76,8 @@ resource "azurerm_kubernetes_cluster" "this" {
   # kubenet: simpler, smaller IP footprint — suitable for single-node dev cluster.
   # Pods get IPs from a private overlay network, not from the Azure VNet.
   network_profile {
-    network_plugin    = "kubenet"
+    network_plugin = "kubenet"
+    network_policy = "calico"      # CKV_AZURE_7: network policy required; calico works with kubenet
     load_balancer_sku = "standard" # Required for managed outbound IPs
   }
 
