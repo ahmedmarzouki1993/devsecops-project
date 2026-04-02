@@ -20,6 +20,10 @@ spec:
         version: latest
     spec:
       serviceAccountName: devsecops-app
+      # Disable default SA token mount — the backend never calls the K8s API directly.
+      # Azure Workload Identity injects its own projected token via a mutating webhook,
+      # which is unaffected by this setting.
+      automountServiceAccountToken: false
       # Non-root: prevents container escape → host root escalation
       securityContext:
         runAsNonRoot: true
