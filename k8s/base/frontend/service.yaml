@@ -11,6 +11,6 @@ spec:
     app.kubernetes.io/name: frontend
   ports:
     - port: 3000
-      targetPort: 3000
+      targetPort: 8080
   # ClusterIP: NGINX Ingress routes external traffic here — no need for LoadBalancer per pod
   type: ClusterIP

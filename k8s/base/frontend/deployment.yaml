@@ -19,17 +19,18 @@ spec:
         app.kubernetes.io/part-of: devsecops-project
         version: latest
     spec:
-      # Non-root: prevents container escape → host root escalation
+      # Non-root: nginx:1.27-alpine uses UID 101 (nginx user).
+      # We set runAsNonRoot but do NOT override runAsUser so the
+      # Dockerfile's USER nginx (101) is respected — avoids /var/cache/nginx
+      # permission errors when forcing an arbitrary UID.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001
-        fsGroup: 1001
       containers:
         - name: frontend
           image: acrdevsecops9nsi.azurecr.io/frontend:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 3000
+            - containerPort: 8080
           # Resource limits prevent one pod from starving others on the single node
           resources:
             requests:
@@ -41,12 +42,12 @@ spec:
           # Nginx serves static files — simple TCP probe is sufficient
           livenessProbe:
             tcpSocket:
-              port: 3000
+              port: 8080
             initialDelaySeconds: 10
             periodSeconds: 20
           readinessProbe:
             tcpSocket:
-              port: 3000
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
           securityContext:
