@@ -8,6 +8,8 @@ namespace: devsecops-project
 
 resources:
   - namespace.yaml
+  - serviceaccount.yaml
+  - secret-provider.yaml
   # Backend
   - backend/deployment.yaml
   - backend/service.yaml

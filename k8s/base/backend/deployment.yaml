@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/part-of: devsecops-project
         version: latest
     spec:
+      serviceAccountName: devsecops-app
       # Non-root: prevents container escape → host root escalation
       securityContext:
         runAsNonRoot: true
