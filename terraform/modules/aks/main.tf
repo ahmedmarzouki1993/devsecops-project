@@ -43,6 +43,12 @@ resource "azurerm_kubernetes_cluster" "this" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
+  # ── Auto-upgrade channel ───────────────────────────────────────────────────
+  # "patch": AKS automatically upgrades to the latest stable patch version
+  # within the current minor version. Safe for production — no breaking changes.
+  # Required by Checkov bc-azure-2-29 (CIS Azure benchmark).
+  automatic_channel_upgrade = "patch"
+
   # ── Networking ─────────────────────────────────────────────────────────────
   # kubenet: simpler, smaller IP footprint — suitable for single-node dev cluster.
   # Pods get IPs from a private overlay network, not from the Azure VNet.
