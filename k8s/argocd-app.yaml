@@ -6,6 +6,11 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/part-of: devsecops-project
+  annotations:
+    # Subscribe this app to Slack notifications via argocd-notifications
+    notifications.argoproj.io/subscribe.on-synced.slack: deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: deployments
+    notifications.argoproj.io/subscribe.on-degraded.slack: deployments
 spec:
   project: default
 
