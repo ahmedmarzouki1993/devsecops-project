@@ -22,6 +22,10 @@ spec:
       # Non-root: nginx:1.27-alpine defines the nginx user as UID 101.
       # runAsUser must be numeric — K8s cannot resolve named users from the image
       # manifest, so "USER nginx" alone fails the runAsNonRoot check.
+      # The frontend (nginx serving static files) never calls the K8s API.
+      # Disabling token auto-mount removes a credential from the pod that
+      # an attacker could use to query or modify cluster resources.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
