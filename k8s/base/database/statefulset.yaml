@@ -29,27 +29,20 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 5432
           env:
-            # Secrets sourced from Key Vault via CSI driver → synced K8s Secret.
-            # No passwords in Git. Key Vault is the single source of truth.
-            - name: POSTGRES_DB
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: dbname
-            - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: username
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: password
+            # Use _FILE variants: postgres reads the secret value from a file path,
+            # not from the env var value itself. This passes CKV_K8S_35 (secrets as
+            # files, not env vars) and is supported natively by the official postgres image.
+            # The CSI driver mounts Key Vault secrets as files at /mnt/secrets/.
+            - name: POSTGRES_DB_FILE
+              value: /mnt/secrets/db-name
+            - name: POSTGRES_USER_FILE
+              value: /mnt/secrets/db-user
+            - name: POSTGRES_PASSWORD_FILE
+              value: /mnt/secrets/db-password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           resources:
