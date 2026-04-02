@@ -12,9 +12,9 @@
 #   auditable, and works with Privileged Identity Management (PIM) in prod.
 # =============================================================================
 
-# checkov:skip=CKV_AZURE_189: "Public network access required — CSI Secrets Store driver accesses KV from AKS over public endpoint (no VNet peering in student setup)"
-# checkov:skip=CKV2_AZURE_32: "Private endpoint requires VNet integration and private DNS zone — out of scope for student budget"
 resource "azurerm_key_vault" "this" {
+  #checkov:skip=CKV_AZURE_189: Public access required — CSI Secrets Store driver reaches KV over public endpoint (no VNet peering in student setup)
+  #checkov:skip=CKV2_AZURE_32: Private endpoint requires VNet integration and private DNS zone — out of scope for student budget
   # Name max 24 chars. "kv-devsecops-ab12" = 18 chars — safe.
   name                = "kv-${var.project_name}-${var.suffix}"
   resource_group_name = var.resource_group_name

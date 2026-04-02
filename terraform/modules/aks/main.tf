@@ -8,17 +8,18 @@
 #   without touching ACR or Key Vault code.
 # =============================================================================
 
-# checkov:skip=CKV_AZURE_115: "Private cluster requires private runner or VPN — GitLab CI uses public runners"
-# checkov:skip=CKV_AZURE_6:   "API server IP ranges not set — GitLab CI runners use dynamic IPs"
-# checkov:skip=CKV_AZURE_170: "Paid SLA tier costs ~$70/mo — exceeds student budget"
-# checkov:skip=CKV_AZURE_116: "Azure Policy add-on: Kyverno already enforces admission policies in-cluster"
-# checkov:skip=CKV_AZURE_141: "Local admin account: AAD integration not configured in student tenancy"
-# checkov:skip=CKV_AZURE_117: "Disk encryption set requires a separate DES resource — cost and complexity out of scope"
-# checkov:skip=CKV_AZURE_227: "Temp disk encryption requires disk encryption set — same as above"
-# checkov:skip=CKV_AZURE_226: "Ephemeral OS disks not supported on Standard_B2s VM size"
-# checkov:skip=CKV_AZURE_232: "Only-system-pods taint requires a second node pool — single-node budget constraint"
-# checkov:skip=CKV2_AZURE_29: "Azure CNI requires more VNet IPs — kubenet is intentional choice for single-node dev cluster"
 resource "azurerm_kubernetes_cluster" "this" {
+  #checkov:skip=CKV_AZURE_115: Private cluster requires private runner or VPN — GitLab CI uses public runners
+  #checkov:skip=CKV_AZURE_6:   API server IP ranges not set — GitLab CI runners use dynamic IPs
+  #checkov:skip=CKV_AZURE_170: Paid SLA tier costs ~$70/mo — exceeds student budget
+  #checkov:skip=CKV_AZURE_116: Azure Policy add-on — Kyverno already enforces admission policies in-cluster
+  #checkov:skip=CKV_AZURE_141: Local admin disabled requires AAD integration — not configured in student tenancy
+  #checkov:skip=CKV_AZURE_117: Disk encryption set requires separate DES resource — cost and complexity out of scope
+  #checkov:skip=CKV_AZURE_227: Temp disk encryption requires disk encryption set — same as above
+  #checkov:skip=CKV_AZURE_226: Ephemeral OS disks not supported on Standard_B2s VM size
+  #checkov:skip=CKV_AZURE_232: System-only node taint requires a second node pool — single-node budget constraint
+  #checkov:skip=CKV2_AZURE_29: Azure CNI requires more VNet IPs — kubenet is intentional for single-node dev cluster
+  #checkov:skip=CKV_AZURE_4:   OMS agent requires Log Analytics workspace — using Prometheus/Grafana stack instead
   name                = "aks-${var.project_name}"
   resource_group_name = var.resource_group_name
   location            = var.location
