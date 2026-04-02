@@ -32,7 +32,7 @@ spec:
       containers:
         - name: backend
           image: acrdevsecops9nsi.azurecr.io/backend:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           env:

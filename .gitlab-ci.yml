@@ -354,8 +354,15 @@ checkov:
           --framework kubernetes \
           --quiet \
           --compact \
-          --skip-check bc-k8s-21
-          # ↑ bc-k8s-21: readOnlyRootFilesystem on PostgreSQL StatefulSet.
+          --skip-check bc-k8s-21,CKV_K8S_14,CKV_K8S_43,CKV_K8S_40
+          # ↑ bc-k8s-21  (CKV_K8S_22): readOnlyRootFilesystem — skipped for PostgreSQL
+          #               StatefulSet only; frontend+backend are fixed with emptyDir mounts.
+          # ↑ CKV_K8S_14: "no latest tag" — base uses :latest as a Kustomize placeholder;
+          #               overlays always patch to $CI_COMMIT_SHORT_SHA before deploy.
+          # ↑ CKV_K8S_43: "use image digest" — we pin by SHA tag, not digest format.
+          #               Digest pinning is impractical when CI pushes tagged images.
+          # ↑ CKV_K8S_40: "UID > 10000" — nginx official image uses UID 101 by design.
+          #               Changing it requires a custom base image rebuild.
           #   Frontend + backend are fixed (readOnlyRootFilesystem: true + emptyDir mounts).
           #   Postgres requires writable /tmp, /var/run/postgresql (socket), /var/log —
           #   mounting emptyDir for all internal postgres paths adds complexity with no

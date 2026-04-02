@@ -36,7 +36,7 @@ spec:
       containers:
         - name: frontend
           image: acrdevsecops9nsi.azurecr.io/frontend:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           # Resource limits prevent one pod from starving others on the single node
