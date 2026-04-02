@@ -14,6 +14,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from app.database import create_tables
 from app.routers import health, items, metrics, users
 
@@ -55,3 +57,9 @@ app.include_router(health.router)
 app.include_router(items.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(metrics.router, prefix="/api/v1")
+
+# /metrics — Prometheus scrape endpoint (no /api prefix, Prometheus expects root path)
+app.include_router(metrics.prometheus_router)
+
+# Instrument all routes: tracks request count, latency, in-flight requests
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
