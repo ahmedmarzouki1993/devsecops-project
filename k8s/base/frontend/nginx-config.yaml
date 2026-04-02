@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-main-config
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: devsecops-project
+data:
+  # Override /etc/nginx/nginx.conf to fix paths that break non-root execution.
+  # The stock nginx:1.27-alpine config writes to /run/nginx.pid and
+  # /var/cache/nginx/* — both unwritable by UID 101 in a restricted pod.
+  # We redirect all writable paths to /tmp which is always world-writable.
+  nginx.conf: |
+    # 'user nginx' is a no-op when not running as root — suppress the warning
+    # by removing it; the process already runs as UID 101 via securityContext.
+    worker_processes  auto;
+
+    error_log  /var/log/nginx/error.log notice;
+    pid        /tmp/nginx.pid;
+
+    events {
+        worker_connections  1024;
+    }
+
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+
+        log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                          '$status $body_bytes_sent "$http_referer" '
+                          '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log  /var/log/nginx/access.log  main;
+
+        sendfile        on;
+        keepalive_timeout  65;
+
+        # Redirect all temp paths to /tmp (writable by non-root)
+        client_body_temp_path /tmp/client_temp;
+        proxy_temp_path       /tmp/proxy_temp;
+        fastcgi_temp_path     /tmp/fastcgi_temp;
+        uwsgi_temp_path       /tmp/uwsgi_temp;
+        scgi_temp_path        /tmp/scgi_temp;
+
+        include /etc/nginx/conf.d/*.conf;
+    }

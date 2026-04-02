@@ -12,6 +12,7 @@ resources:
   - backend/deployment.yaml
   - backend/service.yaml
   # Frontend
+  - frontend/nginx-config.yaml
   - frontend/deployment.yaml
   - frontend/service.yaml
   - frontend/ingress.yaml
