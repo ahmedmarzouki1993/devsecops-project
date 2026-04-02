@@ -4,3 +4,18 @@ metadata:
   name: devsecops-project
   labels:
     app.kubernetes.io/part-of: devsecops-project
+    # Pod Security Standards — three independent modes per profile:
+    #   enforce: violations are REJECTED (pod creation fails)
+    #   warn:    violations show a warning but pod is still created
+    #   audit:   violations are recorded in the audit log
+    #
+    # We enforce "baseline" to block the most dangerous patterns
+    # (privileged, hostPID, hostNetwork, dangerous capabilities).
+    # We audit+warn at "restricted" so we can see the full gap
+    # without breaking workloads that aren't fully locked down yet.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest

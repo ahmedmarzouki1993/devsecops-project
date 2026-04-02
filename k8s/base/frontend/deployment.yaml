@@ -26,6 +26,9 @@ spec:
         runAsNonRoot: true
         runAsUser: 101
         fsGroup: 101
+        # PSS restricted: runtime default seccomp profile
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: frontend
           image: acrdevsecops9nsi.azurecr.io/frontend:latest
@@ -54,6 +57,11 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            # PSS restricted: drop all capabilities — nginx serves static
+            # files and needs no special kernel privileges
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
             # Mount our fixed nginx.conf over the stock one that writes to /run/nginx.pid
             - name: nginx-main-config

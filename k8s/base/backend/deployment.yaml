@@ -25,6 +25,10 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         fsGroup: 1001
+        # PSS restricted: enable the runtime's default seccomp profile.
+        # RuntimeDefault allows the syscalls most applications legitimately use.
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backend
           image: acrdevsecops9nsi.azurecr.io/backend:latest
@@ -59,3 +63,9 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            # PSS restricted: drop ALL Linux capabilities.
+            # FastAPI/uvicorn needs no special capabilities — no raw sockets,
+            # no kernel module loading, no setuid binaries.
+            capabilities:
+              drop:
+                - ALL

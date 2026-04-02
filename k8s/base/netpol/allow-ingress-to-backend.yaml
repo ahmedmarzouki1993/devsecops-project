@@ -1,0 +1,34 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-backend
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  # This policy applies to the backend pod only
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # NGINX Ingress Controller proxies /api/* requests to backend.
+        # Same controller namespace as frontend — both routes come through here.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+    - from:
+        # Prometheus (in monitoring namespace) scrapes /metrics every 15s.
+        # ServiceMonitor in monitoring/ namespace points to this port.
+        # Why separate: never allow monitoring to talk to frontend or database.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8000
+          protocol: TCP

@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  # This policy applies to the frontend pod only
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Allow traffic only from the NGINX Ingress Controller pods.
+        # The ingress-nginx namespace is standard for helm-installed NGINX ingress.
+        # Why: browser → LoadBalancer IP → NGINX controller → frontend pod.
+        #      No other pod needs to reach the frontend directly.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP

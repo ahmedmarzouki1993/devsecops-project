@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  # All pods in the namespace need DNS to resolve service names
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        # UDP 53 — standard DNS lookup
+        - port: 53
+          protocol: UDP
+        # TCP 53 — large DNS responses (DNSSEC, etc.)
+        - port: 53
+          protocol: TCP

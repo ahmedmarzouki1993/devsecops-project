@@ -10,6 +10,7 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - secret-provider.yaml
+  - rbac.yaml
   # Backend
   - backend/deployment.yaml
   - backend/service.yaml
@@ -22,6 +23,12 @@ resources:
   - database/pvc.yaml
   - database/statefulset.yaml
   - database/service.yaml
+  # Network Policies (Phase 8 — defense in depth at the network layer)
+  - netpol/default-deny.yaml
+  - netpol/allow-dns.yaml
+  - netpol/allow-ingress-to-frontend.yaml
+  - netpol/allow-ingress-to-backend.yaml
+  - netpol/allow-backend-to-database.yaml
 
 # Common labels applied to every resource in this base
 commonLabels:

@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-database
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  # This policy controls the database pod's ingress
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # ONLY the backend pod may connect to PostgreSQL.
+        # The frontend pod is explicitly excluded — it has no path to the database.
+        # This enforces the 3-tier architecture at the network layer:
+        #   browser → ingress → backend → database (frontend skips directly to DB is blocked)
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-egress-to-database
+  namespace: devsecops-project
+  labels:
+    app.kubernetes.io/part-of: devsecops-project
+spec:
+  # Backend needs egress to PostgreSQL for all API operations
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: database
+      ports:
+        - port: 5432
+          protocol: TCP
