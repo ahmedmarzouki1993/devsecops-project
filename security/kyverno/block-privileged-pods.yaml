@@ -1,0 +1,56 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: block-privileged-pods
+  annotations:
+    policies.kyverno.io/title: Block Privileged Pods
+    policies.kyverno.io/description: >
+      A privileged container has full access to the host kernel — equivalent to
+      root on the node. If an attacker escapes a privileged container, they own
+      the node. This policy blocks privileged containers and dangerous host
+      namespace sharing (hostPID, hostIPC, hostNetwork).
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: block-privileged-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devsecops-project
+      validate:
+        message: "Privileged containers are not allowed."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.securityContext.privileged || false }}"
+                    operator: Equals
+                    value: true
+
+    - name: block-host-namespaces
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devsecops-project
+      validate:
+        message: "Sharing host namespaces (hostPID, hostIPC, hostNetwork) is not allowed."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.hostPID || false }}"
+                operator: Equals
+                value: true
+              - key: "{{ request.object.spec.hostIPC || false }}"
+                operator: Equals
+                value: true
+              - key: "{{ request.object.spec.hostNetwork || false }}"
+                operator: Equals
+                value: true

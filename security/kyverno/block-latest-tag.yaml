@@ -1,0 +1,38 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: block-latest-tag
+  annotations:
+    policies.kyverno.io/title: Block Latest Tag
+    policies.kyverno.io/description: >
+      Images tagged :latest are non-deterministic — the same tag can point to
+      different image digests over time, making rollbacks unreliable and audits
+      impossible. This policy blocks any pod that uses :latest or has no tag.
+      CI must always push images tagged with $CI_COMMIT_SHORT_SHA.
+spec:
+  # Enforce = deny the request. Audit = allow but log.
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-non-latest-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              # Only enforce in our app namespace, not system namespaces
+              namespaces:
+                - devsecops-project
+      validate:
+        message: >
+          Image tag ':latest' is not allowed and images must have an explicit tag.
+          Use a specific tag from CI (e.g. image:abc1234).
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  # Deny if tag is explicitly "latest"
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"
