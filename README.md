@@ -232,23 +232,41 @@ No `kubectl create secret` commands. No base64-encoded values in YAML. Key Vault
 
 ---
 
-## Monitoring
+## Monitoring & Log Aggregation
 
+### Metrics — Prometheus + Grafana
 - **Prometheus** scrapes `/metrics` from the FastAPI backend every 15s via `ServiceMonitor` CRD
-- **Grafana** dashboards show: request rate, latency (p50/p95/p99), pod CPU/memory, error rate
-- **Slack #alerts** receives notifications when CPU > 80% or any pod crashes
+- **Grafana** dashboard ("FastAPI Observability") shows: request rate, p99 latency, error rate by handler, 5xx count
+- Deployed via `kube-prometheus-stack` Helm chart
+
+### Logs — Loki + Promtail
+- **Promtail** DaemonSet automatically collects stdout/stderr from all pods and ships to Loki
+- **Loki** stores and indexes logs — queryable in Grafana using LogQL
+- Grafana log panel shows all `devsecops-project` namespace logs with live filtering via `$log_keyword` variable
+
+### Slack Alert Routing
+Alerts are routed to `#alerts` only when `severity ≥ warning` — noise from `info`/`debug` is discarded:
+
+| Source | Severity filter | Channel |
+|--------|----------------|---------|
+| Grafana alert rules | `warning`, `error`, `critical` | `#alerts` |
+| Falco (Falcosidekick) | `warning` and above | `#alerts` |
+| ArgoCD sync | all sync events | `#deployments` |
+| GitLab CI | pipeline pass/fail | `#ci-pipeline` |
 
 Access Grafana:
 ```bash
 kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
-# Open http://localhost:3000 (admin / prom-operator)
+# Open http://localhost:3000 — dashboard: "FastAPI Observability (K8s)"
 ```
 
 ---
 
 ## Infrastructure (Terraform)
 
-All Azure resources are created with Terraform, tagged, and stored in remote state:
+All Azure resources are created with Terraform, tagged, and stored in remote state.
+
+### Resources
 
 | Resource | Name | SKU |
 |----------|------|-----|
@@ -257,6 +275,12 @@ All Azure resources are created with Terraform, tagged, and stored in remote sta
 | Container Registry | `acrdevsecops` | Basic |
 | Key Vault | `kv-devsecops-<unique>` | Standard |
 | TF State Storage | `stdevsecopsstate` | LRS |
+
+### Security hardening (CIS Azure benchmark — Checkov)
+- AKS: `automatic_channel_upgrade = patch`, Calico network policy, Secrets Store CSI auto-rotation, 50 max pods/node
+- ACR: untagged manifest retention policy (7 days), admin credentials disabled
+- Key Vault: purge protection enabled, network ACLs deny-all with AzureServices bypass
+- 20 checks intentionally skipped with justification (Premium SKU requirements, student budget constraints)
 
 ```bash
 cd terraform/
@@ -321,13 +345,14 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:909
 
 ## Skills Demonstrated
 
-- **Infrastructure as Code** — Terraform modules, remote state, tagging strategy
-- **Container security** — Multi-stage builds, non-root, Trivy scanning, Cosign signing
-- **CI/CD pipeline design** — GitLab CI with ordered security gates, fail-fast strategy
-- **GitOps** — ArgoCD self-healing sync, Kustomize overlay pattern, Slack notifications
+- **Infrastructure as Code** — Terraform modules, remote state, tagging strategy, CIS benchmark hardening
+- **Container security** — Multi-stage builds, non-root, Trivy scanning, Cosign image signing
+- **CI/CD pipeline design** — GitLab CI with 6 ordered security gates, fail-fast strategy
+- **GitOps** — ArgoCD self-healing sync, Kustomize overlay pattern, Slack deployment notifications
 - **Admission control** — Kyverno ClusterPolicies in enforce mode, policy testing
-- **Runtime security** — Falco eBPF syscall monitoring, Falcosidekick routing
+- **Runtime security** — Falco eBPF syscall monitoring, Falcosidekick alert routing
 - **Secrets management** — Azure Key Vault + CSI Secrets Store, zero secrets in Git
 - **Network hardening** — Kubernetes NetworkPolicies, zero-trust default-deny architecture
-- **Observability** — Prometheus ServiceMonitor, Grafana provisioning API, alert routing
+- **Observability** — Prometheus + Loki + Grafana stack, custom dashboard, severity-based Slack routing
 - **Cost management** — Azure Student Pack constraints, budget alerts, AKS stop/start habit
+- **Compliance** — Checkov Terraform scanning, 16 CIS checks passing, 20 skipped with documented justification
